@@ -18,6 +18,7 @@ from wayfare.i18n import t
 from wayfare.geo import estimate_leg
 from wayfare.llm import LLMClient, ModelCall, output_rejection, parse_wording_response, word_instructions
 from wayfare.models import FEATURES, Member, TripInput, Venue
+from wayfare.money import planning_budget_sgd
 from wayfare.preferences import moving_average_update
 from wayfare.routing import HEURISTIC_NOTE, RouteResult, optimise, pacing_variance_hours, travel_detour_ratio
 from wayfare.scoring import feature_vector, normalise_alphas, preference_match
@@ -200,7 +201,9 @@ def _metrics(trip: TripInput, route: RouteResult, filtered: FilterResult, catalo
         "nsw_product": route.plan.nsw_product,
         "nsw_log": None if log_value != log_value or log_value == float("-inf") else log_value,
         "known_cost_sgd": route.total_known_cost,
-        "budget_sgd": trip.budget_sgd,
+        "budget_sgd": planning_budget_sgd(trip),
+        "budget_entered": trip.budget_sgd,
+        "budget_currency": (trip.budget_currency or "SGD").upper(),
     }
 
 

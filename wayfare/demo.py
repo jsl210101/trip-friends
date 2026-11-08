@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from wayfare.models import format_hm
+from wayfare.money import exchange_suggestion, format_money, format_rate
 from wayfare.pipeline import plan_trip
 from wayfare.sample import sample_trip
 from wayfare.venues import load_venues
@@ -20,7 +21,13 @@ def main() -> None:
     for member, utility in zip(trip.members, result.route.utilities):
         print(f"  {member.name}: U={utility:.3f}  weight={member.weight}")
     print(f"NSW product: {result.metrics['nsw_product']}")
-    print(f"Known cost: {result.metrics['known_cost_sgd']} / {trip.budget_sgd}")
+    hint = exchange_suggestion(trip.budget_sgd, trip.budget_currency, allow_network=False)
+    print(
+        f"Budget: {format_money(hint.entered_amount, hint.entered_currency)} "
+        f"≈ {format_money(hint.converted_amount, hint.converted_currency)} "
+        f"({hint.source}, 1 {hint.rate_base} = {format_rate(hint.rate_value)} {hint.rate_quote}, {hint.as_of})"
+    )
+    print(f"Known cost: {result.metrics['known_cost_sgd']} / {result.metrics['budget_sgd']} SGD")
     print(f"Hard-constraint violations: {result.metrics['hard_constraint_violations']}")
     for day in result.route.days:
         print(f"\n{day.day}  {format_hm(day.start_min)}–{format_hm(day.end_min)}")

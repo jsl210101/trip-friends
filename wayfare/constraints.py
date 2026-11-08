@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from wayfare.models import Member, TripInput, Venue, weekday_key
+from wayfare.money import planning_budget_sgd
 
 
 @dataclass
@@ -115,7 +116,7 @@ def filter_venues(venues: list[Venue], trip: TripInput) -> FilterResult:
             reasons.append("hours")
         if (
             venue.price_per_person_sgd is not None
-            and venue.price_per_person_sgd * party > trip.budget_sgd + 1e-6
+            and venue.price_per_person_sgd * party > planning_budget_sgd(trip) + 1e-6
         ):
             reasons.append("budget")
         if trip.weather_scenario == "heavy_rain" and venue.weather_sensitive:

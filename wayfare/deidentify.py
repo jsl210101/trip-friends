@@ -17,6 +17,7 @@ import re
 from urllib.parse import unquote, urlparse
 
 from wayfare.models import INTERESTS, LinkImport, Member, TripInput
+from wayfare.money import planning_budget_sgd
 
 ALLOWLIST: frozenset[str] = frozenset(
     {
@@ -263,7 +264,7 @@ def build_llm_payload(
     payload: dict = {
         "purpose": purpose,
         "trip_dates": [trip.start_date, trip.end_date],
-        "budget_sgd": trip.budget_sgd,
+        "budget_sgd": round(planning_budget_sgd(trip), 2),
         "interests": interests,
         "pace": pace,
         "weightage": weightage,

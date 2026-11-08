@@ -156,6 +156,10 @@ class TripInput:
     abode_lon: float
     members: list[Member]
     must_visits: list[MustVisit] = field(default_factory=list)
+    budget_currency: str = "SGD"
+    # SGD per 1 unit of budget_currency, locked from the suggestion on screen.
+    # None uses the offline table. The pipeline does not fetch a rate itself.
+    fx_sgd_per_unit: float | None = None
     links: list[LinkImport] = field(default_factory=list)
     alphas: dict[str, float] = field(default_factory=dict)
     beta: float = 0.5
