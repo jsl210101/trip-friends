@@ -74,6 +74,7 @@ def sample_trip() -> TripInput:
         day_start="09:30",
         day_end="21:00",
         budget_sgd=420.0,
+        budget_currency="SGD",
         transport_modes=["transit", "walk"],
         abode_label="Marina Bay area",
         abode_address="10 Bayfront Avenue, Singapore 018956",

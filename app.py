@@ -18,6 +18,7 @@ from wayfare.explain import render_explanation
 from wayfare.i18n import DEFAULT_LANG, floor_text, t, venue_caption
 from wayfare.links import resolve_links
 from wayfare.llm import LLMClient
+from wayfare.money import CURRENCIES, exchange_suggestion, format_money, format_rate
 from wayfare.models import (
     FEATURES,
     INTERESTS,
@@ -120,6 +121,7 @@ def _init() -> None:
     ss.day_start = "09:30"
     ss.day_end = "21:00"
     ss.budget = 420.0
+    ss.budget_currency = "SGD"
     ss.modes = ["transit", "walk"]
     ss.abode_label = "Marina Bay area"
     ss.abode_address = ""
@@ -166,6 +168,8 @@ def _load_sample() -> None:
     ss.day_start = trip.day_start
     ss.day_end = trip.day_end
     ss.budget = trip.budget_sgd
+    ss.budget_currency = trip.budget_currency or "SGD"
+    ss["budget_currency"] = ss.budget_currency
     ss.modes = list(trip.transport_modes)
     ss["modes_input"] = list(trip.transport_modes)
     ss.abode_label = trip.abode_label
@@ -227,6 +231,40 @@ def _alphas_from_state() -> dict[str, float]:
     return alphas
 
 
+def _fx_suggestion():
+    amount = float(st.session_state.get("budget_input", st.session_state.budget) or 0.0)
+    currency = st.session_state.get("budget_currency", "SGD")
+    cache = st.session_state.setdefault("fx_cache", {})
+    return exchange_suggestion(amount, currency, allow_network=True, cache=cache)
+
+
+def _render_exchange() -> None:
+    suggestion = _fx_suggestion()
+    st.markdown(f"**{tr('fx.title')}**")
+    st.write(
+        tr(
+            "fx.line",
+            entered=format_money(suggestion.entered_amount, suggestion.entered_currency),
+            converted=format_money(suggestion.converted_amount, suggestion.converted_currency),
+        )
+    )
+    if suggestion.entered_currency == "SGD":
+        st.caption(tr("fx.already_sgd"))
+    else:
+        st.caption(tr("fx.used_for_planning", planning=format_money(suggestion.planning_sgd, "SGD")))
+    st.caption(
+        tr(
+            "fx.rate",
+            base=suggestion.rate_base,
+            rate=format_rate(suggestion.rate_value),
+            quote=suggestion.rate_quote,
+            source=tr(f"fx.{suggestion.source}"),
+            as_of=suggestion.as_of,
+        )
+    )
+    st.caption(tr("fx.disclaimer"))
+
+
 def _current_trip() -> TripInput:
     label = st.session_state.get("abode_label_input", st.session_state.abode_label)
     preset = _abode(label)
@@ -244,6 +282,8 @@ def _current_trip() -> TripInput:
         day_start=st.session_state.get("day_start_input", st.session_state.day_start).strip(),
         day_end=st.session_state.get("day_end_input", st.session_state.day_end).strip(),
         budget_sgd=float(st.session_state.get("budget_input", st.session_state.budget)),
+        budget_currency=st.session_state.get("budget_currency", "SGD"),
+        fx_sgd_per_unit=_fx_suggestion().sgd_per_unit,
         transport_modes=list(st.session_state.get("modes_input", st.session_state.modes)),
         abode_label=label,
         abode_address=address.strip(),
@@ -517,21 +557,23 @@ def _render_inputs() -> None:
     top[1].date_input(tr("input.end"), key="end_date_input")
     top[2].text_input(tr("input.day_start"), key="day_start_input")
     top[3].text_input(tr("input.day_end"), key="day_end_input")
-    second = st.columns(3)
+    second = st.columns([1.3, 0.8, 1.3, 1.4])
     second[0].number_input(tr("input.budget"), min_value=0.0, step=10.0, key="budget_input")
-    second[1].multiselect(
+    second[1].selectbox(tr("input.currency"), list(CURRENCIES), key="budget_currency")
+    second[2].multiselect(
         tr("input.modes"),
         ["walk", "transit", "ride_hail"],
         format_func=lambda value: tr(f"mode.{value}"),
         key="modes_input",
     )
-    second[2].selectbox(
+    second[3].selectbox(
         tr("input.abode"),
         [item["label"] for item in ABODES],
         format_func=lambda value: tr(f"area.{value}"),
         key="abode_label_input",
     )
     st.text_input(tr("input.address"), key="abode_address_input", help=tr("input.address_help"))
+    _render_exchange()
     _render_members()
     _render_places()
 
@@ -558,6 +600,7 @@ def _render_privacy() -> None:
         return
     st.json(payload)
     st.caption(tr("privacy.preview_note"))
+    st.caption(tr("fx.payload"))
 
 
 def _render_filter(plan) -> None:
@@ -637,7 +680,12 @@ def _render_plan() -> None:
     )
     product = metrics["nsw_product"]
     cards[2].metric(tr("plan.nsw"), f"{product:.3f}" if isinstance(product, float) else "—")
-    cards[3].metric(tr("plan.cost"), f"SGD {metrics['known_cost_sgd']:.0f}", tr("plan.budget_delta", budget=metrics["budget_sgd"]))
+    entered = format_money(float(metrics.get("budget_entered", metrics["budget_sgd"])), str(metrics.get("budget_currency", "SGD")))
+    cards[3].metric(
+        tr("plan.cost"),
+        f"SGD {metrics['known_cost_sgd']:.0f}",
+        f"{entered} → SGD {metrics['budget_sgd']:.0f}",
+    )
     st.write(floor_text(trip.members, plan.route.utilities, plan.beta, plan.meets_floor, lang()))
     extra = st.columns(3)
     detour = metrics["detour_ratio"]
@@ -828,6 +876,8 @@ def main() -> None:
     st.session_state.setdefault("day_start_input", st.session_state.day_start)
     st.session_state.setdefault("day_end_input", st.session_state.day_end)
     st.session_state.setdefault("budget_input", st.session_state.budget)
+    st.session_state.setdefault("budget_currency", st.session_state.budget_currency)
+    st.session_state.setdefault("fx_cache", {})
     st.session_state.setdefault("modes_input", st.session_state.modes)
     st.session_state.setdefault("abode_label_input", st.session_state.abode_label)
     st.session_state.setdefault("abode_address_input", st.session_state.abode_address)

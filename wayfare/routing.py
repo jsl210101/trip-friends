@@ -15,6 +15,7 @@ from datetime import date
 from wayfare.fairness import PlanUtility, plan_is_better
 from wayfare.geo import estimate_leg
 from wayfare.models import Member, MustVisit, TripInput, Venue, format_hm, parse_hm, weekday_key
+from wayfare.money import planning_budget_sgd
 from wayfare.scoring import normalise_satisfaction, score_member_venue
 
 # Local-search breadth is capped so a re-plan stays interactive.
@@ -188,6 +189,7 @@ def simulate(
     scheduled: list[ScheduledDay] = []
     scores: dict[str, list[float]] = {member.id: [] for member in members}
     collected = 0.0
+    budget_sgd = planning_budget_sgd(trip)
     modes = trip.transport_modes or ["walk"]
     for day_iso in ordered_days:
         bounds = _bounds(trip, day_iso, first)
@@ -205,7 +207,7 @@ def simulate(
             venue = venues.get(node.venue_id)
             if venue is None:
                 return None
-            remaining = trip.budget_sgd - total_cost - day_cost
+            remaining = budget_sgd - total_cost - day_cost
             leg = estimate_leg(lat, lon, venue.lat, venue.lon, modes, party, remaining_budget=remaining)
             if leg is None:
                 return None
@@ -248,7 +250,7 @@ def simulate(
             )
             clock = depart
             lat, lon = venue.lat, venue.lon
-        remaining = trip.budget_sgd - total_cost - day_cost
+        remaining = budget_sgd - total_cost - day_cost
         back = estimate_leg(lat, lon, trip.abode_lat, trip.abode_lon, modes, party, remaining_budget=remaining)
         if back is None or clock + back.minutes > end_min:
             return None
