@@ -13,6 +13,8 @@ def main() -> None:
     result = plan_trip(trip)
     names = {venue.id: venue.name for venue in load_venues()}
     print("Wayfare sample plan")
+    if trip.links:
+        print(f"Sample import: {trip.links[0].url} (Xiaohongshu short link, not opened)")
     print(f"Floor met: {result.meets_floor}")
     print(result.floor_message)
     for member, utility in zip(trip.members, result.route.utilities):

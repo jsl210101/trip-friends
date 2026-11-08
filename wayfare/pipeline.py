@@ -14,8 +14,9 @@ from datetime import date
 from wayfare.constraints import FilterResult, drop_reason_text, filter_venues
 from wayfare.deidentify import PayloadRejected, assign_pseudonyms, build_llm_payload
 from wayfare.explain import Explanation, _group, apply_model_wording, explain_pair, member_weights
+from wayfare.i18n import t
 from wayfare.geo import estimate_leg
-from wayfare.llm import WORD_INSTRUCTIONS, LLMClient, ModelCall, output_rejection, parse_wording_response
+from wayfare.llm import LLMClient, ModelCall, output_rejection, parse_wording_response, word_instructions
 from wayfare.models import FEATURES, Member, TripInput, Venue
 from wayfare.preferences import moving_average_update
 from wayfare.routing import HEURISTIC_NOTE, RouteResult, optimise, pacing_variance_hours, travel_detour_ratio
@@ -258,6 +259,7 @@ def rephrase_explanations(
     explanations: list[Explanation],
     llm: LLMClient | None = None,
     ai_consent: bool = False,
+    lang: str = "en",
 ) -> tuple[list[Explanation], ModelCall]:
     """Ask the model to word existing explanations. Reject anything unfaithful."""
     client = llm or LLMClient()
@@ -269,47 +271,47 @@ def rephrase_explanations(
             links=[],
         )
     except PayloadRejected as exc:
-        return explanations, ModelCall(payload={}, sent=False, accepted=False, rejection=str(exc))
+        return explanations, ModelCall(payload={}, sent=False, accepted=False, rejection=t("privacy.refused", lang))
     if not ai_consent:
         return explanations, ModelCall(
             payload=payload,
             sent=False,
             accepted=False,
-            rejection="AI consent is off, so explanations stayed on the local template.",
+            rejection=t("model.consent_off", lang),
         )
     if not client.available:
         return explanations, ModelCall(
             payload=payload,
             sent=False,
             accepted=False,
-            rejection="No LLM_API_KEY or OPENAI_API_KEY is set. Explanations stayed on the local template.",
+            rejection=t("model.no_key", lang),
         )
-    raw = client.complete_json(payload, WORD_INSTRUCTIONS)
+    raw = client.complete_json(payload, word_instructions(lang))
     if raw is None:
         return explanations, ModelCall(
             payload=payload,
             sent=True,
             accepted=False,
-            rejection="The model call failed. Explanations stayed on the local template.",
+            rejection=t("model.failed", lang),
         )
     secrets: list[str] = [trip.abode_address]
     for member in trip.members:
         secrets.extend([member.name, member.email, member.booking_ref])
     rejection = output_rejection(raw, secrets)
     if rejection:
-        return explanations, ModelCall(payload=payload, sent=True, accepted=False, rejection=rejection)
+        return explanations, ModelCall(payload=payload, sent=True, accepted=False, rejection=t(rejection, lang))
     parsed = parse_wording_response(raw)
     if parsed is None:
         return explanations, ModelCall(
             payload=payload,
             sent=True,
             accepted=False,
-            rejection="The model response did not match the fixed wording schema and was rejected.",
+            rejection=t("model.schema", lang),
         )
-    updated, rejected_ids = apply_model_wording(explanations, parsed)
+    updated, rejected_ids = apply_model_wording(explanations, parsed, lang=lang)
     note = None
     if rejected_ids:
-        note = "Some model sentences did not cite the true top factor and were discarded: " + ", ".join(rejected_ids)
+        note = t("model.unfaithful", lang, ids=", ".join(rejected_ids))
     return updated, ModelCall(payload=payload, sent=True, accepted=True, rejection=note, body={"stops": parsed})
 
 
@@ -318,12 +320,13 @@ def apply_member_feedback(
     venue: Venue,
     signal: float,
     personalisation_consent: bool,
+    lang: str = "en",
 ) -> tuple[Member, str]:
     """Update one member when they consented. Other members are simply not passed in."""
     if not personalisation_consent:
-        return member, "Personalisation is off, so this feedback was not applied to the preference profile."
+        return member, t("feedback.off", lang)
     preferences, count = moving_average_update(member, venue, signal)
     if count == member.update_count:
-        return member, "A neutral rating does not change the preference profile."
+        return member, t("feedback.neutral", lang)
     updated = replace(member, preferences=preferences, update_count=count)
-    return updated, "Updated only this traveller's preference vector with a simple moving average."
+    return updated, t("feedback.updated", lang)

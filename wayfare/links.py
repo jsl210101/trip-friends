@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from urllib.parse import unquote
 
 from wayfare.deidentify import build_llm_payload, sanitise_link
+from wayfare.i18n import t
 from wayfare.llm import (
     EXTRACT_INSTRUCTIONS,
     LLMClient,
@@ -27,6 +28,19 @@ from wayfare.models import LinkImport, TripInput, Venue
 
 CONFIRMED_THRESHOLD = 0.82
 POSSIBLE_THRESHOLD = 0.55
+
+# Hosts the importer recognises. Matching still uses only the path and caption.
+IMPORT_HOSTS: tuple[str, ...] = (
+    "xiaohongshu.com",
+    "xhslink.com",
+    "xhs.cn",
+    "douyin.com",
+    "tiktok.com",
+    "instagram.com",
+    "google.com",
+    "goo.gl",
+    "maps.app.goo.gl",
+)
 
 _STOPWORDS = {
     "the",
@@ -73,11 +87,28 @@ class LinkResolution:
     payload: dict
     model_call: ModelCall
     notes: list[str] = field(default_factory=list)
+    note_keys: list[str] = field(default_factory=list)
+    model_dropped: list[str] = field(default_factory=list)
+
+
+def import_host(url: str) -> str:
+    from urllib.parse import urlparse
+
+    host = (urlparse(url).netloc or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def is_supported_import_host(url: str) -> bool:
+    """True for Xiaohongshu, Douyin, and the other advertised share hosts."""
+    host = import_host(url)
+    return any(host == item or host.endswith("." + item) for item in IMPORT_HOSTS)
 
 
 def normalise_text(value: str) -> str:
     text = unquote(value or "").lower().replace("+", " ")
-    text = re.sub(r"[^a-z0-9]+", " ", text)
+    text = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -89,6 +120,12 @@ def name_score(text: str, name: str) -> float:
     text_norm = normalise_text(text)
     name_norm = normalise_text(name)
     if not text_norm or not name_norm:
+        return 0.0
+    if any("\u4e00" <= char <= "\u9fff" for char in name_norm):
+        # Chinese names are not space-separated, so a caption can hold the
+        # name inside a longer sentence. Two characters avoids a one-word hit.
+        if len(name_norm) >= 2 and name_norm in text_norm:
+            return 1.0
         return 0.0
     padded_text = f" {text_norm} "
     padded_name = f" {name_norm} "
@@ -181,6 +218,7 @@ def resolve_links(
     """Match every imported link. The model is called only with consent and a key."""
     payload = build_llm_payload(trip, purpose="extract_places")
     notes: list[str] = []
+    note_keys: list[str] = []
     model_places: list[dict] = []
     call = ModelCall(payload=payload, sent=False, accepted=False, rejection=None, body=None)
     client = llm or LLMClient()
@@ -190,28 +228,34 @@ def resolve_links(
         if raw is None:
             call.rejection = "The model call failed. Local matching was used instead."
             notes.append(call.rejection)
+            note_keys.append("link.failed")
         else:
             echoed = [sanitise_link(link, trip.members, trip.abode_address, trip.abode_label)["caption"] for link in trip.links]
             rejection = output_rejection(raw, _forbidden(trip), echoed)
             if rejection:
-                call.rejection = rejection
-                notes.append(rejection)
+                call.rejection = t(rejection, "en")
+                notes.append(call.rejection)
+                note_keys.append(rejection)
             else:
                 parsed = parse_place_response(raw)
                 if parsed is None:
                     call.rejection = "The model response did not match the fixed place schema and was rejected."
                     notes.append(call.rejection)
+                    note_keys.append("link.bad_schema")
                 else:
                     call.accepted = True
                     call.body = {"places": parsed}
                     model_places = parsed
     elif ai_consent and not client.available:
         notes.append("AI consent is on, but no LLM_API_KEY or OPENAI_API_KEY is set. Local matching was used.")
+        note_keys.append("link.no_key")
     else:
         notes.append("No model call. Places were matched locally from the URL path and caption.")
+        note_keys.append("link.local")
 
     matches: list[PlaceMatch] = []
     unmatched: list[str] = []
+    model_dropped: list[str] = []
     seen: set[str] = set()
     for link in trip.links:
         cleaned = sanitise_link(link, trip.members, trip.abode_address, trip.abode_label)
@@ -228,6 +272,7 @@ def resolve_links(
     if model_places:
         accepted, dropped = accept_extracted_names([item["name"] for item in model_places], venues, source="model")
         for name in dropped:
+            model_dropped.append(name)
             unmatched.append(f"Model suggested “{name}”, which is not in the venue catalogue and was dropped.")
         for item in accepted:
             if item.venue_id in seen:
@@ -237,7 +282,15 @@ def resolve_links(
             seen.add(item.venue_id)
             matches.append(item)
     matches.sort(key=lambda item: (-item.confidence, item.venue_name))
-    return LinkResolution(matches=matches, unmatched=unmatched, payload=payload, model_call=call, notes=notes)
+    return LinkResolution(
+        matches=matches,
+        unmatched=unmatched,
+        payload=payload,
+        model_call=call,
+        notes=notes,
+        note_keys=note_keys,
+        model_dropped=model_dropped,
+    )
 
 
 def resolution_from_caption(text: str, venues: list[Venue]) -> tuple[list[PlaceMatch], list[str]]:

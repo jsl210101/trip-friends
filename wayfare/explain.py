@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from wayfare.i18n import feature_name, reason_phrase, t
 from wayfare.models import FEATURES, Member
 from wayfare.scoring import factor_label, score_features, top_factor
 
@@ -31,6 +32,18 @@ class Explanation:
     why_not: str
     reversal: str
     wording: str = "template"
+    # Structured fields let the same scores be worded in Chinese or English.
+    anchor_role: str | None = None
+    omitted: tuple[str, ...] = ()
+    text_case: str = "no_alternative"
+    gap_value: float | None = None
+    chosen_group_score: float | None = None
+    alternative_group_score: float | None = None
+    reversal_feature: str | None = None
+    reversal_old: float | None = None
+    reversal_new: float | None = None
+    blocked_reason: str | None = None
+    wording_lang: str = "en"
 
 
 def _group(
@@ -113,27 +126,91 @@ def smallest_weight_reversal(
     return feature, old, new
 
 
-def _why(venue_name: str, contributions: dict[str, float], omitted: list[str], anchor_role: str | None = None) -> str:
-    leading = top_factor(contributions)
-    if anchor_role == "anchor_timed":
-        prefix = f"{venue_name} is a FIXED must-visit and stays at its requested time. "
-    elif anchor_role == "anchor_must":
-        prefix = f"{venue_name} is a must-visit anchor, so the route keeps it. "
+def render_explanation(explanation: Explanation, lang: str = "en") -> tuple[str, str, str]:
+    """Word a stored explanation. Model text is kept only in the language it was written."""
+    if explanation.wording == "model" and explanation.wording_lang == lang:
+        return explanation.why, explanation.why_not, explanation.reversal
+    if explanation.anchor_role == "anchor_timed":
+        prefix = t("explain.prefix.timed", lang, name=explanation.venue_name)
+    elif explanation.anchor_role == "anchor_must":
+        prefix = t("explain.prefix.must", lang, name=explanation.venue_name)
     else:
         prefix = ""
-    if leading is None:
-        return prefix + f"{venue_name} was scheduled, but every scoring feature was missing so no contribution could be cited."
-    ordered = sorted(contributions, key=lambda feature: (-contributions[feature], feature))
-    parts = [f"{factor_label(feature)} ({contributions[feature]:.2f})" for feature in ordered]
-    text = (
-        prefix
-        + f"{venue_name} was chosen because the largest contribution to its normalised group score "
-        f"is {factor_label(leading)}. Contributions: {', '.join(parts)}."
-    )
-    if omitted:
-        names = ", ".join(factor_label(feature) for feature in omitted)
-        text += f" Omitted rather than guessed: {names}."
-    return text
+    if explanation.top_factor and explanation.contributions:
+        ordered = sorted(explanation.contributions, key=lambda feature: (-explanation.contributions[feature], feature))
+        parts = ", ".join(
+            f"{feature_name(feature, lang)} ({explanation.contributions[feature]:.2f})" for feature in ordered
+        )
+        why = t(
+            "explain.why",
+            lang,
+            prefix=prefix,
+            name=explanation.venue_name,
+            factor=feature_name(explanation.top_factor, lang),
+            parts=parts,
+        )
+        if explanation.omitted:
+            why += t(
+                "explain.omitted",
+                lang,
+                names=", ".join(feature_name(feature, lang) for feature in explanation.omitted),
+            )
+    else:
+        why = t("explain.why_missing", lang, prefix=prefix, name=explanation.venue_name)
+    name = explanation.venue_name
+    alt = explanation.alternative_name or ""
+    case = explanation.text_case
+    if case == "blocked":
+        why_not = t(
+            "explain.why_not.blocked",
+            lang,
+            alt=alt,
+            reason=reason_phrase(explanation.blocked_reason or "", lang),
+        )
+        reversal = t("explain.reversal.blocked", lang, name=name, alt=alt)
+    elif case == "no_factors":
+        why_not = t("explain.why_not.no_factors", lang, alt=alt)
+        reversal = t("explain.reversal.none", lang)
+    elif case == "higher":
+        why_not = t(
+            "explain.why_not.higher",
+            lang,
+            alt=alt,
+            alt_score=explanation.alternative_group_score or 0.0,
+            chosen_score=explanation.chosen_group_score or 0.0,
+            factor=feature_name(explanation.gap_factor or "", lang),
+            gap=explanation.gap_value or 0.0,
+        )
+        reversal = t("explain.reversal.higher", lang, alt=alt)
+    elif case == "lower":
+        why_not = t(
+            "explain.why_not.lower",
+            lang,
+            alt=alt,
+            factor=feature_name(explanation.gap_factor or "", lang),
+            gap=explanation.gap_value or 0.0,
+        )
+        if explanation.reversal_feature is None or explanation.reversal_new is None or explanation.reversal_old is None:
+            reversal = t("explain.reversal.no_flip", lang, alt=alt, name=name)
+        else:
+            direction = t(
+                "explain.raise" if explanation.reversal_new > explanation.reversal_old else "explain.lower",
+                lang,
+            )
+            reversal = t(
+                "explain.reversal.flip",
+                lang,
+                direction=direction,
+                factor=feature_name(explanation.reversal_feature, lang),
+                old=explanation.reversal_old,
+                new=explanation.reversal_new,
+                alt=alt,
+                name=name,
+            )
+    else:
+        why_not = t("explain.why_not.none", lang)
+        reversal = t("explain.reversal.none", lang)
+    return why, why_not, reversal
 
 
 def explain_pair(
@@ -151,64 +228,32 @@ def explain_pair(
     """Faithful explanation for one chosen venue against one named alternative."""
     _, contributions, omitted = _group(chosen_rows, weights, alphas)
     leading = top_factor(contributions) or "preference_match"
-    why = _why(venue_name, contributions, omitted, anchor_role)
     gap_name: str | None = None
-    why_not = "No alternative was left to compare."
-    reversal = "There is no alternative venue to reverse against."
+    gap_value: float | None = None
+    chosen_score: float | None = None
+    alt_score: float | None = None
+    reversal_feature: str | None = None
+    reversal_old: float | None = None
+    reversal_new: float | None = None
+    text_case = "no_alternative"
     if blocked_reason and alternative_name:
-        why_not = (
-            f"{alternative_name} cannot take this slot: {blocked_reason}. "
-            "That is a hard constraint applied before scoring, so criterion weights and "
-            "agreed weightage cannot put it back. The explanation does not attach the "
-            "constraint to a named traveller."
-        )
-        reversal = (
-            f"No single change to a criterion weight reverses {venue_name} and {alternative_name}, "
-            "because the alternative never entered the scored set."
-        )
+        text_case = "blocked"
     elif alternative_name and alternative_rows is not None:
         alt_score, alt_contrib, _ = _group(alternative_rows, weights, alphas)
         chosen_score, _, _ = _group(chosen_rows, weights, alphas)
         gap_name = _gap_factor(contributions, alt_contrib)
-        gap_value = 0.0
         if gap_name is not None:
             gap_value = contributions.get(gap_name, 0.0) - alt_contrib.get(gap_name, 0.0)
         if gap_name is None:
-            why_not = f"{alternative_name} has no comparable score factors."
+            text_case = "no_factors"
         elif alt_score > chosen_score + 1e-9:
-            why_not = (
-                f"{alternative_name} has a higher group score ({alt_score:.2f} against {chosen_score:.2f}). "
-                f"The factor with the largest score difference is {factor_label(gap_name)} "
-                f"(gap {gap_value:.2f}). It was not scheduled because no feasible insertion "
-                "improved the penalised orienteering prize while keeping the fairness floor, "
-                "time windows, opening hours, budget, and must-visit anchors."
-            )
-            reversal = (
-                f"The score ranking is already in favour of {alternative_name}. "
-                "The single change that would put it on the itinerary is a feasible time or budget slot, "
-                "not a criterion weight."
-            )
+            text_case = "higher"
         else:
-            why_not = (
-                f"{alternative_name} scores lower. The factor with the largest score difference is "
-                f"{factor_label(gap_name)} (gap {gap_value:.2f})."
-            )
+            text_case = "lower"
             flip = smallest_weight_reversal(chosen_rows, alternative_rows, weights, alphas)
-            if flip is None:
-                reversal = (
-                    f"No single criterion-weight change inside the 0–1 slider range makes "
-                    f"{alternative_name} outrank {venue_name} after the weights are renormalised."
-                )
-            else:
-                feature, old, new = flip
-                direction = "Raise" if new > old else "Lower"
-                reversal = (
-                    f"{direction} the {factor_label(feature)} weight from {old:.2f} to {new:.2f}, "
-                    f"leaving the other sliders where they are. After renormalisation that is the "
-                    f"smallest single slider change that makes {alternative_name} outrank {venue_name} "
-                    f"on the weighted group score."
-                )
-    return Explanation(
+            if flip is not None:
+                reversal_feature, reversal_old, reversal_new = flip
+    explanation = Explanation(
         venue_id=venue_id,
         venue_name=venue_name,
         top_factor=leading,
@@ -216,21 +261,51 @@ def explain_pair(
         alternative_id=alternative_id,
         alternative_name=alternative_name,
         gap_factor=gap_name,
-        why=why,
-        why_not=why_not,
-        reversal=reversal,
+        why="",
+        why_not="",
+        reversal="",
+        anchor_role=anchor_role,
+        omitted=tuple(omitted),
+        text_case=text_case,
+        gap_value=None if gap_value is None else round(gap_value, 4),
+        chosen_group_score=None if chosen_score is None else round(chosen_score, 4),
+        alternative_group_score=None if alt_score is None else round(alt_score, 4),
+        reversal_feature=reversal_feature,
+        reversal_old=None if reversal_old is None else round(reversal_old, 4),
+        reversal_new=None if reversal_new is None else round(reversal_new, 4),
+        blocked_reason=blocked_reason,
     )
+    why, why_not, reversal = render_explanation(explanation, "en")
+    explanation.why = why
+    explanation.why_not = why_not
+    explanation.reversal = reversal
+    return explanation
 
 
-def wording_is_faithful(explanation: Explanation, why: str, top: str) -> bool:
-    """A rephrase is kept only when it still names the same top factor."""
+def wording_is_faithful(explanation: Explanation, why: str, top: str, lang: str = "en") -> bool:
+    """A rephrase is kept only when it still names the same top factor, in the UI language."""
     if top != explanation.top_factor:
         return False
+    labels = {
+        explanation.top_factor,
+        factor_label(explanation.top_factor),
+        feature_name(explanation.top_factor, "en"),
+        feature_name(explanation.top_factor, "zh"),
+        feature_name(explanation.top_factor, lang),
+    }
     lowered = why.lower()
-    return factor_label(explanation.top_factor) in lowered or explanation.top_factor in lowered
+    if not any(label and label.lower() in lowered for label in labels):
+        return False
+    if lang == "zh":
+        return any("\u4e00" <= char <= "\u9fff" for char in why)
+    return any(character.isascii() and character.isalpha() for character in why)
 
 
-def apply_model_wording(explanations: list[Explanation], stops: list[dict[str, str]]) -> tuple[list[Explanation], list[str]]:
+def apply_model_wording(
+    explanations: list[Explanation],
+    stops: list[dict[str, str]],
+    lang: str = "en",
+) -> tuple[list[Explanation], list[str]]:
     """Replace template sentences only where the model kept the true top factor."""
     by_id = {item["venue_id"]: item for item in stops}
     updated: list[Explanation] = []
@@ -240,7 +315,7 @@ def apply_model_wording(explanations: list[Explanation], stops: list[dict[str, s
         if item is None:
             updated.append(explanation)
             continue
-        if not wording_is_faithful(explanation, item.get("why", ""), item.get("top_factor", "")):
+        if not wording_is_faithful(explanation, item.get("why", ""), item.get("top_factor", ""), lang):
             notes.append(explanation.venue_id)
             updated.append(explanation)
             continue
@@ -251,6 +326,7 @@ def apply_model_wording(explanations: list[Explanation], stops: list[dict[str, s
                 why_not=item.get("why_not", explanation.why_not).strip(),
                 reversal=item.get("reversal", explanation.reversal).strip(),
                 wording="model",
+                wording_lang=lang,
             )
         )
     return updated, notes
