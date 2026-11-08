@@ -87,11 +87,12 @@ def sample_trip() -> TripInput:
         ],
         links=[
             LinkImport(
-                url="https://www.tiktok.com/@priya.eats/video/7291847562819384756?share_token=secret-token",
+                url="http://xhslink.com/a/GbBay01?share_token=secret-token",
                 caption=(
-                    "Priya Raman night walk at gardens by the bay. "
+                    "Priya Raman 夜逛滨海湾花园 Gardens by the Bay. "
                     "Email priya.raman@example.com ref WF-1004. "
-                    "Stay at 10 Bayfront Avenue, Singapore 018956."
+                    "Stay at 10 Bayfront Avenue, Singapore 018956. "
+                    "复制这段话，打开小红书查看"
                 ),
             )
         ],

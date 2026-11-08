@@ -34,6 +34,9 @@ ALLOWLIST: frozenset[str] = frozenset(
 
 _EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
 _HANDLE_RE = re.compile(r"@[A-Za-z0-9._]+")
+# Stops at whitespace and at characters that are not part of a URL, so a
+# Chinese share card does not glue the following caption onto the link.
+_URL_RE = re.compile(r"https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%\-]+", re.IGNORECASE)
 _PHONE_RE = re.compile(r"(?:\+\d{1,3}[\s-]?)?(?:\(?\d{2,4}\)?[\s-]?)?\d{3,4}[\s-]?\d{3,4}")
 _BOOKING_RE = re.compile(r"\b[A-Z]{2,6}-\d{3,}\b")
 _PLATFORM_SEGMENTS = {
@@ -126,6 +129,37 @@ def redact_free_text(text: str, members: list[Member], address: str, area_label:
     return re.sub(r"\s+", " ", redacted).strip()
 
 
+def _trim_url(url: str) -> str:
+    return url.rstrip(").,;，。、！!？?）】」》\"'")
+
+
+def share_links(text: str) -> list[tuple[str, str]]:
+    """Pull every URL out of a pasted share card. Does not open the network."""
+    found = [_trim_url(match.group(0)) for match in _URL_RE.finditer(text or "")]
+    caption = re.sub(r"\s+", " ", _URL_RE.sub(" ", text or "")).strip()
+    return [(url, caption) for url in found]
+
+
+def split_share_card(url: str, caption: str) -> tuple[str, str]:
+    """Separate a pasted share card into a path and a caption.
+
+    Short links are not opened and redirects are not followed. Query strings
+    stay out of both pieces. If the paste has no URL, the original url field
+    is still read as a path.
+    """
+    blob = " ".join(part.strip() for part in (url, caption) if part and part.strip())
+    found = [_trim_url(match.group(0)) for match in _URL_RE.finditer(blob)]
+    if found:
+        paths = [url_path_for_model(item) for item in found]
+        leftover = _URL_RE.sub(" ", blob)
+    else:
+        paths = [url_path_for_model(url)] if url else []
+        leftover = caption or ""
+    path = " ".join(item for item in paths if item)
+    caption_text = re.sub(r"\s+", " ", leftover).strip()
+    return path, caption_text
+
+
 def url_path_for_model(url: str) -> str:
     """Keep a place-like path and drop hosts, queries, handles, and opaque ids.
 
@@ -152,9 +186,11 @@ def url_path_for_model(url: str) -> str:
 
 
 def sanitise_link(link: LinkImport, members: list[Member], address: str, area_label: str) -> dict[str, str]:
-    path = redact_free_text(url_path_for_model(link.url), members, address, area_label)
-    caption = redact_free_text(link.caption, members, address, area_label)
-    return {"url_path": path, "caption": caption}
+    path, caption = split_share_card(link.url, link.caption)
+    return {
+        "url_path": redact_free_text(path, members, address, area_label),
+        "caption": redact_free_text(caption, members, address, area_label),
+    }
 
 
 def _assert_allowlist(payload: dict) -> None:

@@ -40,6 +40,18 @@ WORD_INSTRUCTIONS = (
     "Use group wording such as \"the group's accessibility requirement\"."
 )
 
+
+def word_instructions(lang: str = "en") -> str:
+    """Ask the model to word explanations in the current interface language."""
+    if lang == "zh":
+        return (
+            WORD_INSTRUCTIONS
+            + " Write why, why_not, and reversal in Simplified Chinese. "
+            + "The why sentence must include the Chinese name of the top factor "
+            + "(偏好匹配, 行程时间, 费用, or 拥挤程度). Leave top_factor as the English code."
+        )
+    return WORD_INSTRUCTIONS + " Write why, why_not, and reversal in English."
+
 _LINK_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 _EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
 
@@ -110,20 +122,20 @@ class LLMClient:
 def output_rejection(obj: object, forbidden: list[str], echoed: list[str] | None = None) -> str | None:
     """Return a reason to discard model output, or None when it may be parsed."""
     if not isinstance(obj, dict):
-        return "Model output was not a JSON object and was rejected."
+        return "model.output_object"
     blob = json.dumps(obj, ensure_ascii=False)
     if _LINK_RE.search(blob):
-        return "Model output contained a link and was rejected."
+        return "model.output_link"
     if _EMAIL_RE.search(blob):
-        return "Model output contained an email address and was rejected."
+        return "model.output_email"
     lowered = blob.lower()
     for secret in forbidden:
         if secret and len(secret) >= 3 and secret.lower() in lowered:
-            return "Model output contained a raw identifier and was rejected."
+            return "model.output_identifier"
     for phrase in echoed or []:
         compact = (phrase or "").strip()
         if len(compact) >= 24 and compact.lower() in lowered:
-            return "Model output echoed raw input and was rejected."
+            return "model.output_echo"
     return None
 
 

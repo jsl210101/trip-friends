@@ -74,8 +74,32 @@ def _venue(
     )
 
 
+_ZH_ALIASES: dict[str, tuple[str, ...]] = {
+    "gardens-by-the-bay": ("滨海湾花园",),
+    "botanic-gardens": ("新加坡植物园", "植物园"),
+    "east-coast-park": ("东海岸公园",),
+    "palawan-beach": ("巴拉湾海滩", "圣淘沙"),
+    "singapore-zoo": ("新加坡动物园",),
+    "night-safari": ("夜间野生动物园",),
+    "jewel-changi": ("星耀樟宜",),
+    "national-gallery": ("新加坡国家美术馆",),
+    "merlion-park": ("鱼尾狮公园", "鱼尾狮"),
+    "ion-orchard": ("乌节路ION",),
+    "bugis-street": ("武吉士街",),
+    "haji-lane": ("哈芝巷",),
+    "maxwell-food-centre": ("麦士威熟食中心",),
+    "lau-pa-sat": ("老巴刹",),
+    "song-fa-bak-kut-teh": ("松发肉骨茶",),
+    "zam-zam": ("赞赞餐厅",),
+    "hjh-maimunah": ("迈慕娜",),
+    "clarke-quay": ("克拉码头",),
+    "marina-bay-waterfront": ("滨海湾滨水步道",),
+    "mbs-skypark": ("滨海湾金沙空中公园",),
+}
+
+
 def load_venues() -> list[Venue]:
-    return [
+    venues = [
         _venue(
             "gardens-by-the-bay",
             "Gardens by the Bay",
@@ -548,6 +572,11 @@ def load_venues() -> list[Venue]:
             crowd=0.7,
         ),
     ]
+    for venue in venues:
+        for alias in _ZH_ALIASES.get(venue.id, ()):
+            if alias not in venue.aliases:
+                venue.aliases.append(alias)
+    return venues
 
 
 def venues_by_id(venues: list[Venue] | None = None) -> dict[str, Venue]:

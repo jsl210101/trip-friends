@@ -2,7 +2,7 @@
 
 The page is a thin shell over the local pipeline. Trip inputs live in
 st.session_state and are discarded by "Clear all my data". Nothing is written
-to a database.
+to a database. Labels follow the session language; scores do not.
 """
 
 from __future__ import annotations
@@ -13,7 +13,9 @@ from datetime import date, datetime
 
 import streamlit as st
 
-from wayfare.deidentify import PayloadRejected, build_llm_payload
+from wayfare.deidentify import PayloadRejected, build_llm_payload, share_links
+from wayfare.explain import render_explanation
+from wayfare.i18n import DEFAULT_LANG, floor_text, t, venue_caption
 from wayfare.links import resolve_links
 from wayfare.llm import LLMClient
 from wayfare.models import (
@@ -35,7 +37,7 @@ from wayfare.pipeline import (
 )
 from wayfare.preferences import rating_to_signal
 from wayfare.sample import sample_trip
-from wayfare.scoring import factor_label
+from wayfare.scoring import preference_match
 from wayfare.venues import ABODES, load_venues
 
 st.set_page_config(page_title="Wayfare", page_icon="WF", layout="wide")
@@ -43,7 +45,13 @@ st.markdown(
     """
     <style>
     .stApp { background: #f6f3ec; }
-    h1, h2, h3 { font-family: Georgia, "Iowan Old Style", Palatino, serif; letter-spacing: -0.02em; }
+    html, body, [class*="css"] {
+        font-family: "Segoe UI", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    }
+    h1, h2, h3 {
+        font-family: Georgia, "Songti SC", "STSong", "Noto Serif SC", serif;
+        letter-spacing: -0.02em;
+    }
     div[data-testid="stSidebar"] { background: #e7efe9; }
     .wayfare-banner {
         background: #123c3a;
@@ -60,31 +68,39 @@ st.markdown(
 
 VENUES = load_venues()
 VENUE_BY_ID = {venue.id: venue for venue in VENUES}
-NOTICE = """
-Before any external model call, Wayfare de-identifies the trip. Names, email
-addresses, booking references, and the precise abode address stay in this
-session. The model, if you consent and a key is configured, receives only an
-allowlisted payload: trip dates, budget, interests, pace, agreed weightage, a
-start-area label, and the path and caption of imported links. Dietary and
-accessibility needs are applied locally as group hard constraints and are not
-sent as one named person's sensitive label.
+_HARD = ("diet", "accessibility", "hours", "budget", "weather")
+_WX = {
+    "Partly cloudy": "wx.partly_cloudy",
+    "Showers possible": "wx.showers",
+    "Warm": "wx.warm",
+    "moderate": "risk.moderate",
+    "higher": "risk.higher",
+    "low": "risk.low",
+}
 
-Trip inputs are used only to plan the current itinerary. They are not used to
-train or fine-tune a model, and they are not used for marketing. Nothing is
-written to a database. Closing the session or choosing **Clear all my data**
-discards it.
 
-These are the controls this build actually implements. They are not a claim of
-PDPA compliance, and they are not a guarantee of privacy. Pseudonymous interest
-vectors are still behavioural data; the control is minimisation.
-"""
+def lang() -> str:
+    return st.session_state.get("lang", DEFAULT_LANG)
+
+
+def tr(key: str, **kwargs: object) -> str:
+    return t(key, lang(), **kwargs)
+
+
+def _named(venue_id: str) -> str:
+    venue = VENUE_BY_ID.get(venue_id)
+    if venue is None:
+        return venue_id
+    return venue_caption(venue.name, venue.aliases, lang())
 
 
 def _init() -> None:
     ss = st.session_state
     if ss.get("ready"):
         return
+    kept_lang = ss.get("lang", DEFAULT_LANG)
     ss.ready = True
+    ss.lang = kept_lang if kept_lang in ("zh", "en") else DEFAULT_LANG
     ss.members = []
     ss.musts = []
     ss.links = []
@@ -158,7 +174,7 @@ def _load_sample() -> None:
     ss["weather_input"] = "forecast"
     ss["delay_input"] = 0
     ss.feedback = []
-    ss.model_note = "Sample link is loaded. Match it, then add Gardens by the Bay if you want the import to count as well as the must-visit already on the trip."
+    ss.model_note = "note.sample"
     for feature, value in trip.alphas.items():
         ss[f"alpha_{feature}"] = value
     ss["beta_slider"] = trip.beta
@@ -177,17 +193,17 @@ def _load_sample() -> None:
 
 
 def _clear() -> None:
+    kept = st.session_state.get("lang", DEFAULT_LANG)
     for key in list(st.session_state.keys()):
         del st.session_state[key]
+    st.session_state.lang = kept
 
 
 def _members_from_state() -> list[Member]:
     updated: list[Member] = []
     for member in st.session_state.members:
         _sync_member_controls(member)
-        preferences = {
-            interest: float(st.session_state[f"pref_{member.id}_{interest}"]) for interest in INTERESTS
-        }
+        preferences = {interest: float(st.session_state[f"pref_{member.id}_{interest}"]) for interest in INTERESTS}
         updated.append(
             replace(
                 member,
@@ -248,20 +264,20 @@ def _current_trip() -> TripInput:
 def _validate(trip: TripInput) -> list[str]:
     errors = []
     if not trip.members:
-        errors.append("Add at least one traveller.")
+        errors.append(tr("error.members"))
     if trip.end_date < trip.start_date:
-        errors.append("The end date is before the start date.")
+        errors.append(tr("error.dates"))
     try:
         if trip.day_end <= trip.day_start:
-            errors.append("The day needs a start time before the end time. Use 24-hour HH:MM.")
+            errors.append(tr("error.times"))
     except ValueError:
-        errors.append("Daily times must look like 09:30.")
+        errors.append(tr("error.time_format"))
     if trip.budget_sgd <= 0:
-        errors.append("Budget has to be above zero.")
+        errors.append(tr("error.budget"))
     if not trip.transport_modes:
-        errors.append("Pick at least one transport mode.")
+        errors.append(tr("error.modes"))
     if len(trip.dates()) > 4:
-        errors.append("This demo catalogue is meant for one to four days.")
+        errors.append(tr("error.span"))
     return errors
 
 
@@ -269,12 +285,61 @@ def _ai_allowed() -> bool:
     return bool(st.session_state.notice and st.session_state.ai_consent)
 
 
+def _show_note(note: str) -> None:
+    if not note:
+        return
+    st.info(tr(note) if note.startswith("note.") or note.startswith("model.") or note.startswith("link.") else note)
+
+
+def _constraint_lines(plan, members: list[Member]) -> list[str]:
+    lines = []
+    for dropped in plan.filtered.dropped:
+        reason = next((item for item in dropped.reasons if item in _HARD), None)
+        venue = VENUE_BY_ID.get(dropped.venue_id)
+        if reason is None or venue is None or not members:
+            continue
+        mean = sum(preference_match(member, venue) for member in members) / len(members)
+        if mean < 0.30:
+            continue
+        lines.append(
+            tr(
+                "block.line",
+                name=venue_caption(venue.name, venue.aliases, lang()),
+                reason=tr(f"reason.{reason}"),
+            )
+        )
+    return lines
+
+
+def _conflict_lines(plan, trip: TripInput) -> list[str]:
+    scheduled = {stop.venue_id for day in plan.route.days for stop in day.stops}
+    lines = []
+    seen: set[str] = set()
+    for must in trip.must_visits:
+        if must.venue_id in scheduled or must.venue_id in seen:
+            continue
+        seen.add(must.venue_id)
+        kind = tr(f"kind.{must.kind.upper()}")
+        name = _named(must.venue_id)
+        dropped = next((item for item in plan.filtered.dropped if item.venue_id == must.venue_id), None)
+        if dropped and dropped.reasons:
+            reason = tr(f"reason.{dropped.reasons[0]}")
+            lines.append(tr("conflict.blocked", name=name, kind=kind, reason=reason))
+            continue
+        bits = " ".join(part for part in (must.on_date, must.at_time) if part)
+        when = tr("conflict.when", when=bits) if bits else ""
+        lines.append(tr("conflict.slot", name=name, kind=kind, when=when))
+    if plan.route.conflicts and not any(day.stops for day in plan.route.days):
+        lines.append(tr("conflict.infeasible"))
+    return lines
+
+
 def _render_banner() -> None:
     st.markdown(
-        """
+        f"""
         <div class="wayfare-banner">
           <strong>Wayfare</strong>
-          <p>A group itinerary planner. Hard constraints, scores, weighted Nash social welfare, and the route are computed in this session. A model, if used at all, only reads de-identified text.</p>
+          <p>{tr("banner.body")}</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -282,55 +347,58 @@ def _render_banner() -> None:
 
 
 def _render_members() -> None:
-    st.subheader("Travellers")
-    st.caption(
-        "Preference sliders are each person's own profile. Agreed influence is w_k. "
-        "The fairness floor does not rewrite it. Diet and access become group hard constraints."
-    )
+    st.subheader(tr("members.title"))
+    st.caption(tr("members.help"))
     if not st.session_state.members:
-        st.info("No travellers yet. Load the sample group, or add someone below.")
+        st.info(tr("members.empty"))
     for index, member in enumerate(list(st.session_state.members)):
         _sync_member_controls(member)
-        with st.expander(f"{member.name or 'Traveller'}  ·  {member.id}", expanded=index == 0):
+        with st.expander(f"{member.name or tr('members.name')}  ·  {member.id}", expanded=index == 0):
             columns = st.columns([2, 1, 1])
-            columns[0].write(f"Email (session only): {member.email or '—'}")
-            columns[1].write(f"Booking ref (session only): {member.booking_ref or '—'}")
-            if columns[2].button("Remove", key=f"remove_{member.id}"):
+            columns[0].write(tr("members.email", value=member.email or tr("members.none")))
+            columns[1].write(tr("members.booking", value=member.booking_ref or tr("members.none")))
+            if columns[2].button(tr("members.remove"), key=f"remove_{member.id}"):
                 st.session_state.members = [item for item in st.session_state.members if item.id != member.id]
                 st.rerun()
             pref_cols = st.columns(4)
             for offset, interest in enumerate(INTERESTS):
-                pref_cols[offset % 4].slider(
-                    interest.capitalize(),
-                    0.0,
-                    1.0,
-                    key=f"pref_{member.id}_{interest}",
-                )
+                pref_cols[offset % 4].slider(tr(f"interest.{interest}"), 0.0, 1.0, key=f"pref_{member.id}_{interest}")
             meta = st.columns(4)
-            meta[0].selectbox("Pace", ["slow", "moderate", "fast"], key=f"pace_{member.id}")
-            meta[1].slider("Crowd tolerance", 0.0, 1.0, key=f"crowd_{member.id}", help="0 prefers quiet. 1 is at ease in a crowd.")
-            meta[2].number_input("Agreed influence w", min_value=0.1, max_value=5.0, step=0.1, key=f"weight_{member.id}")
-            meta[3].caption("Higher w means more influence. It is not a fairness patch.")
+            meta[0].selectbox(
+                tr("members.pace"),
+                ["slow", "moderate", "fast"],
+                format_func=lambda value: tr(f"pace.{value}"),
+                key=f"pace_{member.id}",
+            )
+            meta[1].slider(tr("members.crowd"), 0.0, 1.0, key=f"crowd_{member.id}", help=tr("members.crowd_help"))
+            meta[2].number_input(tr("members.weight"), min_value=0.1, max_value=5.0, step=0.1, key=f"weight_{member.id}")
+            meta[3].caption(tr("members.weight_help"))
             st.multiselect(
-                "Dietary requirements (group hard constraint)",
+                tr("members.diet"),
                 ["halal", "vegetarian", "vegan", "no_pork", "alcohol_free"],
+                format_func=lambda value: tr(f"diet.{value}"),
                 key=f"diet_{member.id}",
             )
             st.multiselect(
-                "Accessibility requirements (group hard constraint)",
+                tr("members.access"),
                 ["wheelchair", "step_free"],
+                format_func=lambda value: tr(f"access.{value}"),
                 key=f"access_{member.id}",
             )
-    with st.expander("Add a traveller"):
+    with st.expander(tr("members.add")):
         with st.form("add_member"):
-            name = st.text_input("Name")
-            email = st.text_input("Email")
-            booking = st.text_input("Booking reference")
-            pace = st.selectbox("Pace", ["moderate", "slow", "fast"])
-            submitted = st.form_submit_button("Add traveller")
+            name = st.text_input(tr("members.name"))
+            email = st.text_input(tr("members.email_field"))
+            booking = st.text_input(tr("members.booking_field"))
+            pace = st.selectbox(
+                tr("members.pace"),
+                ["moderate", "slow", "fast"],
+                format_func=lambda value: tr(f"pace.{value}"),
+            )
+            submitted = st.form_submit_button(tr("members.add_button"))
         if submitted:
             if not name.strip():
-                st.error("A name is needed so the group can tell profiles apart. It stays in the session.")
+                st.error(tr("members.name_required"))
             else:
                 st.session_state._seq += 1
                 member = Member(
@@ -347,16 +415,24 @@ def _render_members() -> None:
 
 
 def _render_places() -> None:
-    st.subheader("Must-visits and imported links")
+    st.subheader(tr("places.title"))
     left, right = st.columns(2)
     with left:
-        venue_id = st.selectbox("Place", [venue.id for venue in VENUES], format_func=lambda item: VENUE_BY_ID[item].name)
-        kind = st.selectbox("Kind", ["FLEXIBLE", "FIXED"])
-        on_date = st.text_input("FIXED date (YYYY-MM-DD, optional)", value="")
-        at_time = st.text_input("FIXED time (HH:MM, optional)", value="")
-        if st.button("Add must-visit"):
+        venue_id = st.selectbox(
+            tr("places.place"),
+            [venue.id for venue in VENUES],
+            format_func=_named,
+        )
+        kind = st.selectbox(
+            tr("places.kind"),
+            ["FLEXIBLE", "FIXED"],
+            format_func=lambda value: tr(f"kind.{value}"),
+        )
+        on_date = st.text_input(tr("places.date"), value="")
+        at_time = st.text_input(tr("places.time"), value="")
+        if st.button(tr("places.add_must")):
             if kind == "FIXED" and at_time and not on_date:
-                st.error("A clock time needs a date, so the anchor locks to the right day.")
+                st.error(tr("places.need_date"))
             else:
                 st.session_state.musts.append(
                     MustVisit(
@@ -369,54 +445,63 @@ def _render_places() -> None:
                 st.rerun()
         if st.session_state.musts:
             for index, must in enumerate(list(st.session_state.musts)):
-                name = VENUE_BY_ID[must.venue_id].name if must.venue_id in VENUE_BY_ID else must.venue_id
-                label = f"{name} · {must.kind}"
+                label = f"{_named(must.venue_id)} · {tr(f'kind.{must.kind.upper()}')}"
                 if must.on_date:
                     label += f" · {must.on_date}"
                 if must.at_time:
                     label += f" {must.at_time}"
                 cols = st.columns([4, 1])
                 cols[0].write(label)
-                if cols[1].button("Drop", key=f"drop_must_{index}"):
+                if cols[1].button(tr("places.drop"), key=f"drop_must_{index}"):
                     st.session_state.musts.pop(index)
                     st.rerun()
         else:
-            st.caption("No must-visits yet. FLEXIBLE ones must appear somewhere. FIXED ones with a time stay locked.")
+            st.caption(tr("places.none"))
     with right:
-        url = st.text_input("Link (TikTok, Instagram, Google Maps, or the web)")
-        caption = st.text_area("Optional caption", height=80)
-        if st.button("Save link"):
-            if url.strip():
-                st.session_state.links.append(LinkImport(url.strip(), caption.strip()))
+        pasted = st.text_area(tr("places.paste"), height=110, help=tr("places.paste_help"))
+        extra = st.text_area(tr("places.caption"), height=68)
+        if st.button(tr("places.save")):
+            blob = "\n".join(part.strip() for part in (pasted, extra) if part and part.strip())
+            pairs = share_links(blob)
+            if pairs:
+                for url, caption in pairs:
+                    st.session_state.links.append(LinkImport(url, caption))
+                st.rerun()
+            elif blob:
+                st.session_state.links.append(LinkImport(blob, ""))
                 st.rerun()
         for index, link in enumerate(st.session_state.links):
-            st.write(f"{index + 1}. {link.url}")
-            if link.caption:
+            st.write(f"{index + 1}. {link.url or link.caption}")
+            if link.caption and link.url:
                 st.caption(link.caption)
-        if st.button("Match imported links"):
+        if st.button(tr("places.match")):
             trip = _current_trip()
             consent = _ai_allowed()
             if st.session_state.ai_consent and not st.session_state.notice:
-                st.warning("Acknowledge the notice on the De-identify tab before a model call. Matching stayed local.")
-            result = resolve_links(trip, VENUES, llm=LLMClient(), ai_consent=consent)
-            st.session_state.link_result = result
+                st.warning(tr("places.notice_first"))
+            st.session_state.link_result = resolve_links(trip, VENUES, llm=LLMClient(), ai_consent=consent)
         result = st.session_state.link_result
         if result is not None:
-            for note in result.notes:
-                st.caption(note)
-            if not result.matches and not result.unmatched:
-                st.info("No place text to match yet.")
+            for key in result.note_keys:
+                st.caption(tr(key))
+            if not result.matches and not result.unmatched and not result.model_dropped:
+                st.info(tr("places.empty_match"))
             chosen = []
             for match in result.matches:
                 confidence = f"{match.confidence:.2f}"
-                flag = "confirm this lower-confidence match" if match.needs_confirmation else "high-confidence catalogue match"
+                flag = tr("places.confirm") if match.needs_confirmation else tr("places.high")
                 match_key = f"match_{match.venue_id}_{match.source}"
                 st.session_state.setdefault(match_key, not match.needs_confirmation)
-                if st.checkbox(f"{match.venue_name} ({confidence}, {match.source}, {flag})", key=match_key):
+                label = f"{_named(match.venue_id)} ({confidence}, {match.source}, {flag})"
+                if st.checkbox(label, key=match_key):
                     chosen.append(match.venue_id)
             for text in result.unmatched:
-                st.warning(f"Dropped, no catalogue match: {text}")
-            if st.button("Add selected matches as flexible must-visits") and chosen:
+                if text.startswith("Model suggested"):
+                    continue
+                st.warning(tr("places.dropped", text=text))
+            for name in result.model_dropped:
+                st.warning(tr("places.model_dropped", name=name))
+            if st.button(tr("places.add_matches")) and chosen:
                 existing = {must.venue_id for must in st.session_state.musts}
                 for venue_id in chosen:
                     if venue_id not in existing:
@@ -425,70 +510,76 @@ def _render_places() -> None:
 
 
 def _render_inputs() -> None:
-    st.header("1. Plan input")
-    st.caption("Nothing is stored until you confirm, and even then it stays in this session.")
+    st.header(tr("tab.input"))
+    st.caption(tr("input.caption"))
     top = st.columns(4)
-    top[0].date_input("Start date", key="start_date_input")
-    top[1].date_input("End date", key="end_date_input")
-    top[2].text_input("Day starts", key="day_start_input")
-    top[3].text_input("Day ends", key="day_end_input")
+    top[0].date_input(tr("input.start"), key="start_date_input")
+    top[1].date_input(tr("input.end"), key="end_date_input")
+    top[2].text_input(tr("input.day_start"), key="day_start_input")
+    top[3].text_input(tr("input.day_end"), key="day_end_input")
     second = st.columns(3)
-    second[0].number_input("Group budget (SGD)", min_value=0.0, step=10.0, key="budget_input")
-    second[1].multiselect("Transport modes", ["walk", "transit", "ride_hail"], key="modes_input")
-    second[2].selectbox("Abode area (sent, at most)", [item["label"] for item in ABODES], key="abode_label_input")
-    st.text_input(
-        "Precise abode address (local start and end node only, never sent)",
-        key="abode_address_input",
-        help="Used as each day's start and end coordinate. The model receives the area label only.",
+    second[0].number_input(tr("input.budget"), min_value=0.0, step=10.0, key="budget_input")
+    second[1].multiselect(
+        tr("input.modes"),
+        ["walk", "transit", "ride_hail"],
+        format_func=lambda value: tr(f"mode.{value}"),
+        key="modes_input",
     )
+    second[2].selectbox(
+        tr("input.abode"),
+        [item["label"] for item in ABODES],
+        format_func=lambda value: tr(f"area.{value}"),
+        key="abode_label_input",
+    )
+    st.text_input(tr("input.address"), key="abode_address_input", help=tr("input.address_help"))
     _render_members()
     _render_places()
 
 
 def _render_privacy() -> None:
-    st.header("2. De-identify")
-    st.markdown(NOTICE)
-    st.checkbox("I have read this notice", key="notice")
-    st.checkbox("Consent to AI generation (link parsing and explanation wording only)", key="ai_consent")
-    st.checkbox("Consent to personalisation (this traveller's own moving-average update)", key="personal_consent")
+    st.header(tr("privacy.title"))
+    st.markdown(tr("privacy.notice"))
+    st.checkbox(tr("privacy.read"), key="notice")
+    st.checkbox(tr("privacy.ai"), key="ai_consent")
+    st.checkbox(tr("privacy.personal"), key="personal_consent")
     key_on = bool(os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY"))
-    st.caption(
-        "Model key detected. Calls use low temperature and a fixed JSON schema."
-        if key_on
-        else "No LLM_API_KEY or OPENAI_API_KEY. Link matching and explanations stay on the local fallback."
-    )
-    st.subheader("Payload that would be sent")
+    st.caption(tr("privacy.key_on") if key_on else tr("privacy.key_off"))
+    st.subheader(tr("privacy.payload"))
     if not _members_from_state():
-        st.info("Add a traveller to preview the allowlisted payload.")
+        st.info(tr("privacy.need_member"))
         return
     try:
         payload = build_llm_payload(_current_trip(), purpose="extract_places")
-    except PayloadRejected as exc:
-        st.error(str(exc))
+    except PayloadRejected:
+        st.error(tr("privacy.refused"))
         return
-    except ValueError as exc:
-        st.error(str(exc))
+    except ValueError:
+        st.error(tr("error.generic"))
         return
     st.json(payload)
-    st.caption("This preview is not a model call. Diet, accessibility, names, emails, booking references, and the street address are absent.")
+    st.caption(tr("privacy.preview_note"))
 
 
 def _render_filter(plan) -> None:
     kept_col, dropped_col = st.columns(2)
     with kept_col:
-        st.markdown("**Still eligible**")
+        st.markdown(f"**{tr('opt.kept')}**")
         for item in plan.filtered.kept:
-            flags = ", ".join(item.flags)
-            price = "price unknown" if item.venue.price_per_person_sgd is None else f"SGD {item.venue.price_per_person_sgd:.0f} / person"
-            st.write(f"{item.venue.name} · {item.venue.area} · {price} · crowd {item.venue.crowd_estimate:.2f} (estimate)")
-            st.caption(f"{flags}. Source: {item.venue.source}. Last reviewed {item.venue.last_updated}.")
+            flags = ", ".join(tr(f"flag.{flag}") for flag in item.flags)
+            if item.venue.price_per_person_sgd is None:
+                price = tr("opt.price_unknown")
+            else:
+                price = tr("opt.price", amount=item.venue.price_per_person_sgd)
+            crowd = tr("opt.crowd", value=item.venue.crowd_estimate)
+            st.write(f"{_named(item.venue.id)} · {item.venue.area} · {price} · {crowd}")
+            st.caption(tr("opt.source", flags=flags, source=tr("catalogue.source"), updated=item.venue.last_updated))
     with dropped_col:
-        st.markdown("**Removed before scoring**")
+        st.markdown(f"**{tr('opt.dropped')}**")
         if not plan.filtered.dropped:
-            st.caption("No venue failed a hard constraint.")
+            st.caption(tr("opt.none_dropped"))
         for item in plan.filtered.dropped:
-            st.write(f"{item.name}")
-            st.caption(item.detail)
+            st.write(_named(item.venue_id))
+            st.caption("; ".join(tr(f"reason.{reason}") for reason in item.reasons))
 
 
 def _optimise() -> None:
@@ -500,192 +591,214 @@ def _optimise() -> None:
         return
     try:
         st.session_state.plan = plan_trip(trip, VENUES)
-    except ValueError as exc:
-        st.error(str(exc))
+    except ValueError:
+        st.error(tr("error.generic"))
         return
     st.session_state.confirmed = False
 
 
 def _render_optimise() -> None:
-    st.header("3. Filter and optimise")
-    st.caption(
-        "Hard constraints run first. S_k(v) is a weighted sum of normalised features. "
-        "U_k is the normalised mean of those scores. The route collects member-weighted "
-        "score inside the day, and it is vetoed when any U_k is below beta."
-    )
+    st.header(tr("opt.title"))
+    st.caption(tr("opt.help"))
     cols = st.columns(4)
-    labels = {
-        "preference_match": "Preference match",
-        "travel_time": "Travel time",
-        "cost": "Cost",
-        "crowd": "Crowd",
-    }
     for index, feature in enumerate(FEATURES):
         st.session_state.setdefault(f"alpha_{feature}", float(st.session_state.alphas.get(feature, 0.25)))
-        cols[index].slider(labels[feature], 0.0, 1.0, key=f"alpha_{feature}")
-    st.slider("Fairness floor beta", 0.0, 0.9, key="beta_slider", help="A plan that leaves anyone below this floor is vetoed. w_k is not rewritten.")
-    if st.button("Optimise itinerary", type="primary"):
+        cols[index].slider(tr(f"feature.{feature}"), 0.0, 1.0, key=f"alpha_{feature}")
+    st.slider(tr("opt.beta"), 0.0, 0.9, key="beta_slider", help=tr("opt.beta_help"))
+    if st.button(tr("opt.button"), type="primary"):
         _optimise()
     plan = st.session_state.plan
     if plan is None:
-        st.info("Optimise to see who was filtered out and which plan the heuristic kept.")
+        st.info(tr("opt.empty"))
         return
-    alphas = plan.normalised_alphas
-    st.write(
-        "Normalised criterion weights: "
-        + ", ".join(f"{factor_label(feature)} {alphas[feature]:.2f}" for feature in FEATURES)
-    )
+    weights = ", ".join(f"{tr(f'feature.{feature}')} {plan.normalised_alphas[feature]:.2f}" for feature in FEATURES)
+    st.write(tr("opt.weights", weights=weights))
     _render_filter(plan)
 
 
 def _render_plan() -> None:
-    st.header("4. Explain and confirm")
+    st.header(tr("plan.title"))
     plan = st.session_state.plan
     if plan is None:
-        st.info("Optimise a plan first. You can swap, reject, or move the weights, then optimise again.")
+        st.info(tr("plan.empty"))
         return
     trip = _current_trip()
     metrics = plan.metrics
     cards = st.columns(4)
-    cards[0].metric("Floor", "Met" if plan.meets_floor else "Vetoed", f"beta {plan.beta:.2f}")
-    cards[1].metric("Lowest satisfaction", f"{metrics['lowest_satisfaction']:.2f}", f"gap {metrics['satisfaction_gap']:.2f}")
+    cards[0].metric(
+        tr("plan.floor"),
+        tr("plan.floor_met") if plan.meets_floor else tr("plan.floor_veto"),
+        tr("plan.floor_delta", beta=plan.beta),
+    )
+    cards[1].metric(
+        tr("plan.lowest"),
+        f"{metrics['lowest_satisfaction']:.2f}",
+        tr("plan.gap", gap=metrics["satisfaction_gap"]),
+    )
     product = metrics["nsw_product"]
-    cards[2].metric("Weighted NSW", f"{product:.3f}" if isinstance(product, float) else "—")
-    cards[3].metric("Known cost", f"SGD {metrics['known_cost_sgd']:.0f}", f"budget {metrics['budget_sgd']:.0f}")
-    st.write(plan.floor_message)
+    cards[2].metric(tr("plan.nsw"), f"{product:.3f}" if isinstance(product, float) else "—")
+    cards[3].metric(tr("plan.cost"), f"SGD {metrics['known_cost_sgd']:.0f}", tr("plan.budget_delta", budget=metrics["budget_sgd"]))
+    st.write(floor_text(trip.members, plan.route.utilities, plan.beta, plan.meets_floor, lang()))
     extra = st.columns(3)
     detour = metrics["detour_ratio"]
-    extra[0].write(f"Detour ratio (estimate): {detour:.2f}" if isinstance(detour, float) else "Detour ratio: —")
-    extra[1].write(f"Pacing variance (hours²): {metrics['pacing_variance_hours']:.2f}")
-    extra[2].write(f"Hard-constraint violations in the plan: {metrics['hard_constraint_violations']}")
-    st.caption(
-        "Detour ratio compares planned travel with a travel-only nearest-neighbour order of the same stops. "
-        "It is not proof of an optimal tour. Crowd, fares, and travel times are estimates."
-    )
-    if plan.constraint_notes:
-        st.subheader("Hard constraints the weights cannot override")
-        for note in plan.constraint_notes:
+    extra[0].write(tr("plan.detour", value=detour) if isinstance(detour, float) else tr("plan.detour_none"))
+    extra[1].write(tr("plan.pacing", value=metrics["pacing_variance_hours"]))
+    extra[2].write(tr("plan.violations", count=metrics["hard_constraint_violations"]))
+    st.caption(tr("plan.detour_help"))
+    blocks = _constraint_lines(plan, trip.members)
+    if blocks:
+        st.subheader(tr("plan.blocks"))
+        for note in blocks:
             st.warning(note)
-    if plan.route.conflicts:
-        st.subheader("Must-visits that could not be placed")
-        for line in plan.route.conflicts:
+    conflicts = _conflict_lines(plan, trip)
+    if conflicts:
+        st.subheader(tr("plan.unplaced"))
+        for line in conflicts:
             st.error(line)
-    st.subheader("Satisfaction")
+    st.subheader(tr("plan.satisfaction"))
     for member_id, utility in zip(plan.route.scores, plan.route.utilities):
         member = next((item for item in st.session_state.members if item.id == member_id), None)
         name = member.name if member else member_id
         label = plan.pseudonyms.get(member_id, "pseudonym")
         weight = member.weight if member else ""
-        st.write(f"{name} ({label} in any model payload): **{utility:.2f}** · agreed influence {weight}")
+        st.write(tr("plan.member_line", name=name, pseudo=label, utility=utility, weight=weight))
     for day in plan.route.days:
         forecast = illustrative_forecast(date.fromisoformat(day.day))
         st.subheader(day.day)
+        condition = tr(_WX.get(forecast["condition"], "wx.warm"))
+        risk = tr(_WX.get(forecast["rain_risk"], "risk.low"))
         st.caption(
-            f"Window {format_hm(day.start_min)}–{format_hm(day.end_min)}. "
-            f"Illustrative weather: {forecast['condition']}, rain risk {forecast['rain_risk']} "
-            f"({forecast['source']}, as of {forecast['as_of']})."
+            tr("plan.window", start=format_hm(day.start_min), end=format_hm(day.end_min))
+            + " "
+            + tr("plan.weather", condition=condition, risk=risk, source=tr("wx.source"), as_of=forecast["as_of"])
         )
         if not day.stops:
-            st.write("No stops fit this day.")
+            st.write(tr("plan.no_stops"))
         for stop in day.stops:
             venue = VENUE_BY_ID.get(stop.venue_id)
-            title = venue.name if venue else stop.venue_id
+            title = _named(stop.venue_id)
             uncertain = []
             if stop.uncertain_hours:
-                uncertain.append("opening hours unknown, not guessed")
+                uncertain.append(tr("flag.hours_unknown"))
             if stop.uncertain_price:
-                uncertain.append("price unknown, not guessed")
+                uncertain.append(tr("flag.price_unknown"))
             suffix = f" — {', '.join(uncertain)}" if uncertain else ""
             st.markdown(
                 f"**{format_hm(stop.arrive_min)}–{format_hm(stop.depart_min)} {title}** "
-                f"({stop.role.replace('_', ' ')}{suffix})"
+                f"({tr(f'role.{stop.role}')}{suffix})"
             )
             if venue:
                 st.caption(
-                    f"Travel {stop.travel_min} min by {stop.travel_mode}, about SGD {stop.travel_cost:.2f} "
-                    f"(estimate, not a live OneMap route). Crowd {venue.crowd_estimate:.2f} (estimate). "
-                    f"Last reviewed {venue.last_updated}."
+                    tr(
+                        "plan.travel",
+                        minutes=stop.travel_min,
+                        mode=tr(f"mode.{stop.travel_mode}"),
+                        cost=stop.travel_cost,
+                        crowd=venue.crowd_estimate,
+                        updated=venue.last_updated,
+                    )
                 )
         st.caption(
-            f"Return to the abode: {day.return_travel_min} min by {day.return_mode}, "
-            f"about SGD {day.return_cost:.2f} (estimate). Known spend this day SGD {day.known_cost:.2f}."
+            tr(
+                "plan.back",
+                minutes=day.return_travel_min,
+                mode=tr(f"mode.{day.return_mode}"),
+                cost=day.return_cost,
+                known=day.known_cost,
+            )
         )
-    st.subheader("Why this, and why not that")
+    st.subheader(tr("plan.why_title"))
     for explanation in plan.explanations:
-        with st.expander(f"{explanation.venue_name} · top factor: {factor_label(explanation.top_factor)} ({explanation.wording})"):
-            st.write(explanation.why)
-            st.write(explanation.why_not)
-            st.write(explanation.reversal)
-    with st.expander("Rephrase explanations with the model"):
-        st.caption("The model may only reword the factors already computed. A sentence that cites the wrong factor is discarded.")
-        if st.button("Rephrase"):
+        why, why_not, reversal = render_explanation(explanation, lang())
+        wording = tr("wording.model") if explanation.wording == "model" and explanation.wording_lang == lang() else tr("wording.template")
+        with st.expander(tr("plan.expander", name=_named(explanation.venue_id), factor=tr(f"feature.{explanation.top_factor}"), wording=wording)):
+            st.write(why)
+            st.write(why_not)
+            st.write(reversal)
+    with st.expander(tr("plan.rephrase")):
+        st.caption(tr("plan.rephrase_help"))
+        if st.button(tr("plan.rephrase_button")):
             if not _ai_allowed():
-                st.session_state.model_note = (
-                    "No model call. Tick the notice and AI consent, and set an API key, or keep the local wording."
-                )
+                st.session_state.model_note = "plan.no_model"
             else:
-                updated, call = rephrase_explanations(trip, plan.explanations, llm=LLMClient(), ai_consent=True)
+                updated, call = rephrase_explanations(
+                    trip,
+                    plan.explanations,
+                    llm=LLMClient(),
+                    ai_consent=True,
+                    lang=lang(),
+                )
                 plan.explanations = updated
                 st.session_state.plan = plan
-                st.session_state.model_note = call.rejection or "Model wording accepted where the top factor still matched."
+                st.session_state.model_note = call.rejection or "plan.wording_ok"
                 st.session_state.last_sent_payload = call.payload
         if st.session_state.model_note:
-            st.info(st.session_state.model_note)
+            _show_note(st.session_state.model_note)
         if st.session_state.get("last_sent_payload"):
-            st.caption("Exact payload from the last wording call")
+            st.caption(tr("plan.sent"))
             st.json(st.session_state.last_sent_payload)
-    st.subheader("Change the plan")
+    st.subheader(tr("plan.change"))
     scheduled = [stop.venue_id for day in plan.route.days for stop in day.stops]
     if not scheduled:
-        st.warning("The heuristic did not place any stops. Relax the floor, the hours, or a must-visit, then optimise again.")
+        st.warning(tr("plan.no_schedule"))
         return
     change = st.columns(2)
     with change[0]:
-        reject_id = st.selectbox("Reject a stop", scheduled, format_func=lambda item: VENUE_BY_ID[item].name, key="reject_id")
-        if st.button("Reject and optimise again"):
+        reject_id = st.selectbox(tr("plan.reject"), scheduled, format_func=_named, key="reject_id")
+        if st.button(tr("plan.reject_button")):
             if reject_id not in st.session_state.excluded:
                 st.session_state.excluded.append(reject_id)
             st.session_state.musts = [must for must in st.session_state.musts if must.venue_id != reject_id]
             _optimise()
             st.rerun()
     with change[1]:
-        swap_from = st.selectbox("Swap this stop", scheduled, format_func=lambda item: VENUE_BY_ID[item].name, key="swap_from")
+        swap_from = st.selectbox(tr("plan.swap"), scheduled, format_func=_named, key="swap_from")
         options = [venue.id for venue in VENUES if venue.id not in scheduled and venue.id not in st.session_state.excluded]
         swap_to = st.selectbox(
-            "With",
+            tr("plan.with"),
             options or [""],
-            format_func=lambda item: VENUE_BY_ID[item].name if item in VENUE_BY_ID else "No replacement left",
+            format_func=lambda item: _named(item) if item in VENUE_BY_ID else tr("plan.no_replacement"),
             key="swap_to",
         )
-        if st.button("Swap and optimise again") and swap_to:
+        if st.button(tr("plan.swap_button")) and swap_to:
             if swap_from not in st.session_state.excluded:
                 st.session_state.excluded.append(swap_from)
             st.session_state.musts = [must for must in st.session_state.musts if must.venue_id != swap_from]
             st.session_state.musts.append(MustVisit(swap_to, "FLEXIBLE"))
             _optimise()
             st.rerun()
-    st.caption("Move the criterion sliders or the floor on the previous tab and optimise again if you want a different balance.")
-    if st.button("Confirm this plan for the session"):
+    st.caption(tr("plan.sliders"))
+    if st.button(tr("plan.confirm")):
         st.session_state.confirmed = True
     if not st.session_state.confirmed:
-        st.info("The plan is a proposal. Confirm it when you want the re-plan and rating controls.")
+        st.info(tr("plan.proposal"))
         return
-    st.success("Confirmed in this session only. It is still not written to a database.")
-    st.subheader("Re-plan")
+    st.success(tr("plan.confirmed"))
+    st.subheader(tr("plan.replan"))
     replan = st.columns(3)
-    replan[0].selectbox("Weather scenario", ["forecast", "heavy_rain"], key="weather_input")
-    replan[1].number_input("Delay on the first morning (minutes)", min_value=0, max_value=240, step=15, key="delay_input")
-    if replan[2].button("Re-optimise"):
+    replan[0].selectbox(
+        tr("plan.weather_scenario"),
+        ["forecast", "heavy_rain"],
+        format_func=lambda value: tr(f"weather.{value}"),
+        key="weather_input",
+    )
+    replan[1].number_input(tr("plan.delay"), min_value=0, max_value=240, step=15, key="delay_input")
+    if replan[2].button(tr("plan.reopt")):
         _optimise()
         st.rerun()
-    st.caption("Heavy rain drops weather-sensitive venues and optimises again. A delay shortens the first day's window.")
-    st.subheader("Rate a stop")
-    st.caption("A rating updates only the traveller you pick, and only if personalisation consent is on. It is a simple moving average, not reinforcement learning.")
+    st.caption(tr("plan.replan_help"))
+    st.subheader(tr("plan.rate"))
+    st.caption(tr("plan.rate_help"))
     rate_cols = st.columns(3)
-    rate_venue = rate_cols[0].selectbox("Stop", scheduled, format_func=lambda item: VENUE_BY_ID[item].name, key="rate_venue")
-    rate_member = rate_cols[1].selectbox("As", [member.id for member in trip.members], format_func=lambda item: next(m.name for m in trip.members if m.id == item), key="rate_member")
-    rating = rate_cols[2].select_slider("Rating", options=[1, 2, 3, 4, 5], value=4)
-    if st.button("Save rating"):
+    rate_venue = rate_cols[0].selectbox(tr("plan.stop"), scheduled, format_func=_named, key="rate_venue")
+    rate_member = rate_cols[1].selectbox(
+        tr("plan.as"),
+        [member.id for member in trip.members],
+        format_func=lambda item: next(member.name for member in trip.members if member.id == item),
+        key="rate_member",
+    )
+    rating = rate_cols[2].select_slider(tr("plan.rating"), options=[1, 2, 3, 4, 5], value=4)
+    if st.button(tr("plan.save_rating")):
         member = next(item for item in st.session_state.members if item.id == rate_member)
         venue = VENUE_BY_ID[rate_venue]
         updated, message = apply_member_feedback(
@@ -693,6 +806,7 @@ def _render_plan() -> None:
             venue,
             rating_to_signal(int(rating)),
             personalisation_consent=bool(st.session_state.personal_consent),
+            lang=lang(),
         )
         st.session_state.members = [updated if item.id == updated.id else item for item in st.session_state.members]
         if st.session_state.personal_consent:
@@ -701,18 +815,14 @@ def _render_plan() -> None:
         st.session_state.feedback.append(message)
     for message in st.session_state.feedback[-4:]:
         st.caption(message)
-    with st.expander("What the heuristic does, and what it does not claim"):
-        st.write(plan.heuristic_note)
-        st.write(
-            "S_k(v) = sum of alpha_f times x_f^(k)(v), after the alphas are normalised and any missing "
-            "feature (an unknown price) is omitted rather than guessed. U_k is that member's mean score, "
-            "clipped to [0, 1]. The search maximises collected score subject to U_k >= beta. "
-            "Weighted NSW is prod U_k^w_k. w_k stays at the agreed influence."
-        )
+    with st.expander(tr("plan.heuristic")):
+        st.write(tr("heuristic.note"))
+        st.write(tr("plan.formula"))
 
 
 def main() -> None:
     _init()
+    st.session_state.setdefault("lang", DEFAULT_LANG)
     st.session_state.setdefault("start_date_input", st.session_state.start_date)
     st.session_state.setdefault("end_date_input", st.session_state.end_date)
     st.session_state.setdefault("day_start_input", st.session_state.day_start)
@@ -728,20 +838,30 @@ def main() -> None:
         st.session_state.setdefault(f"alpha_{feature}", float(st.session_state.alphas.get(feature, 0.25)))
 
     with st.sidebar:
-        st.header("Session")
-        if st.button("Load sample Singapore trip", type="primary"):
+        st.radio(
+            tr("lang.label"),
+            ["zh", "en"],
+            format_func=lambda value: tr(f"lang.{value}"),
+            horizontal=True,
+            key="lang",
+        )
+        st.header(tr("nav.session"))
+        if st.button(tr("nav.sample"), type="primary"):
             _load_sample()
             st.rerun()
-        if st.button("Clear all my data"):
+        if st.button(tr("nav.clear")):
             _clear()
             st.rerun()
-        st.caption("Clearing discards travellers, links, the plan, and ratings. There is no account table.")
-        st.write(f"AI consent: {'on' if st.session_state.ai_consent else 'off'}")
-        st.write(f"Personalisation: {'on' if st.session_state.personal_consent else 'off'}")
-        st.write(f"Plan: {'confirmed' if st.session_state.confirmed else 'not confirmed'}")
+        st.caption(tr("nav.clear_help"))
+        state = tr("status.on") if st.session_state.ai_consent else tr("status.off")
+        st.write(tr("status.ai", state=state))
+        state = tr("status.on") if st.session_state.personal_consent else tr("status.off")
+        st.write(tr("status.personal", state=state))
+        state = tr("status.confirmed") if st.session_state.confirmed else tr("status.draft")
+        st.write(tr("status.plan", state=state))
     _render_banner()
     input_tab, privacy_tab, optimise_tab, plan_tab = st.tabs(
-        ["1. Plan input", "2. De-identify", "3. Filter and optimise", "4. Explain and confirm"]
+        [tr("tab.input"), tr("tab.privacy"), tr("tab.optimise"), tr("tab.explain")]
     )
     with input_tab:
         _render_inputs()

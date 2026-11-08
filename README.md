@@ -14,7 +14,9 @@ pytest
 streamlit run app.py
 ```
 
-In the app, **Load sample Singapore trip**, then **Optimise itinerary**. The sample is four fictional travellers, a two-day window around Marina Bay, a flexible must-visit (Singapore Botanic Gardens), and a TikTok-style link whose caption names Gardens by the Bay. Names, emails, the booking references, and the street address in that sample are invented.
+In the app, use the sidebar language switch (**中文 / English**, Chinese by default), then **载入新加坡示例行程** / **Load sample Singapore trip**, then optimise. The sample is four fictional travellers, a two-day window around Marina Bay, a flexible must-visit (Singapore Botanic Gardens), and a Xiaohongshu share card whose caption names 滨海湾花园 / Gardens by the Bay. The short link is not opened. Names, emails, the booking references, and the street address in that sample are invented.
+
+Imported share text may come from Xiaohongshu (xiaohongshu.com, xhslink.com, xhs.cn), Douyin (douyin.com, v.douyin.com), TikTok, Instagram, or Google Maps. A whole pasted card is split into a path and a caption on this machine. The page is not fetched and short links are not followed.
 
 Without a model key the app still plans, matches links against the offline catalogue, and writes explanations from the scores.
 
@@ -33,7 +35,7 @@ Temperature is capped at 0.2. Do not put keys in the repo.
 ## What runs locally
 
 1. **Plan input.** Dates, daily window, budget, transport, an abode area plus a precise address, per-person interests (nature, culture, food, shopping, nightlife, adventure, relaxation), pace, crowd tolerance, agreed influence `w_k`, FIXED or FLEXIBLE must-visits, and pasted links.
-2. **De-identification gateway.** Names and emails become Person A, Person B, and so on. The only payload that may leave the session is trip dates, budget, interests, pace, agreed weightage, a start-area label, link path plus caption, and, for wording, score facts. Diet and accessibility stay behind as group constraints. The page shows that payload. The social or map page is never opened.
+2. **De-identification gateway.** Names and emails become Person A, Person B, and so on. The only payload that may leave the session is trip dates, budget, interests, pace, agreed weightage, a start-area label, link path plus caption, and, for wording, score facts. Diet and accessibility stay behind as group constraints. The page shows that payload. The social or map page is never opened, including Xiaohongshu and Douyin short links.
 3. **Hard filter.** A venue that breaks the group’s diet, accessibility, known opening hours, or known budget is removed before scoring. Missing hours or prices are flagged and are not guessed. Crowd figures are labelled estimates. Weather in the catalogue is an illustrative label, not a live NEA feed. A heavy-rain re-plan drops weather-sensitive venues.
 4. **Score.** For member `k` and venue `v`,
 
