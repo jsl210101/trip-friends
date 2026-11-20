@@ -1,8 +1,8 @@
 import json
 
-from wayfare.pipeline import plan_trip
-from wayfare.sample import sample_trip
-from wayfare.scoring import factor_label
+from triper.pipeline import plan_trip
+from triper.sample import sample_trip
+from triper.scoring import factor_label
 
 
 def test_sample_group_gets_a_fair_multi_stop_plan_without_leaking_identifiers():

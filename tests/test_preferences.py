@@ -1,7 +1,7 @@
-from wayfare.models import Member, blank_preferences
-from wayfare.pipeline import apply_member_feedback
-from wayfare.preferences import rating_to_signal
-from wayfare.venues import load_venues
+from triper.models import Member, blank_preferences
+from triper.pipeline import apply_member_feedback
+from triper.preferences import rating_to_signal
+from triper.venues import load_venues
 
 
 def test_accept_updates_only_the_member_who_gave_feedback():

@@ -1,7 +1,7 @@
 import json
 
-from wayfare.deidentify import ALLOWLIST, build_llm_payload, url_path_for_model
-from wayfare.sample import sample_trip
+from triper.deidentify import ALLOWLIST, build_llm_payload, url_path_for_model
+from triper.sample import sample_trip
 
 
 def test_payload_strips_identifiers_and_keeps_the_allowlist():

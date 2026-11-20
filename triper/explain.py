@@ -14,9 +14,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from wayfare.i18n import feature_name, reason_phrase, t
-from wayfare.models import FEATURES, Member
-from wayfare.scoring import factor_label, score_features, top_factor
+from triper.i18n import feature_name, reason_phrase, t
+from triper.models import FEATURES, Member
+from triper.scoring import factor_label, score_features, top_factor
 
 
 @dataclass

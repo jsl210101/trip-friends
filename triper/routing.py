@@ -12,11 +12,11 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import date
 
-from wayfare.fairness import PlanUtility, plan_is_better
-from wayfare.geo import estimate_leg
-from wayfare.models import Member, MustVisit, TripInput, Venue, format_hm, parse_hm, weekday_key
-from wayfare.money import planning_budget_sgd
-from wayfare.scoring import normalise_satisfaction, score_member_venue
+from triper.fairness import PlanUtility, plan_is_better
+from triper.geo import estimate_leg
+from triper.models import Member, MustVisit, TripInput, Venue, format_hm, parse_hm, weekday_key
+from triper.money import planning_budget_sgd
+from triper.scoring import normalise_satisfaction, score_member_venue
 
 # Local-search breadth is capped so a re-plan stays interactive.
 MAX_LOCAL_ITERS = 8
@@ -429,7 +429,7 @@ def _local_search(
 
 
 def _mean_preference(venue: Venue, members: list[Member]) -> float:
-    from wayfare.scoring import preference_match
+    from triper.scoring import preference_match
 
     if not members:
         return 0.0

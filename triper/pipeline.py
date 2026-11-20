@@ -11,18 +11,18 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import date
 
-from wayfare.constraints import FilterResult, drop_reason_text, filter_venues
-from wayfare.deidentify import PayloadRejected, assign_pseudonyms, build_llm_payload
-from wayfare.explain import Explanation, _group, apply_model_wording, explain_pair, member_weights
-from wayfare.i18n import t
-from wayfare.geo import estimate_leg
-from wayfare.llm import LLMClient, ModelCall, output_rejection, parse_wording_response, word_instructions
-from wayfare.models import FEATURES, Member, TripInput, Venue
-from wayfare.money import planning_budget_sgd
-from wayfare.preferences import moving_average_update
-from wayfare.routing import HEURISTIC_NOTE, RouteResult, optimise, pacing_variance_hours, travel_detour_ratio
-from wayfare.scoring import feature_vector, normalise_alphas, preference_match
-from wayfare.venues import load_venues
+from triper.constraints import FilterResult, drop_reason_text, filter_venues
+from triper.deidentify import PayloadRejected, assign_pseudonyms, build_llm_payload
+from triper.explain import Explanation, _group, apply_model_wording, explain_pair, member_weights
+from triper.i18n import t
+from triper.geo import estimate_leg
+from triper.llm import LLMClient, ModelCall, output_rejection, parse_wording_response, word_instructions
+from triper.models import FEATURES, Member, TripInput, Venue
+from triper.money import planning_budget_sgd
+from triper.preferences import moving_average_update
+from triper.routing import HEURISTIC_NOTE, RouteResult, optimise, pacing_variance_hours, travel_detour_ratio
+from triper.scoring import feature_vector, normalise_alphas, preference_match
+from triper.venues import load_venues
 
 HARD_REASONS = ("diet", "accessibility", "hours", "budget", "weather")
 

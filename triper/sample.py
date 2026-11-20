@@ -6,8 +6,8 @@ address is session data and must not appear in a model payload.
 
 from __future__ import annotations
 
-from wayfare.models import INTERESTS, LinkImport, Member, MustVisit, TripInput, blank_preferences
-from wayfare.pipeline import default_alphas
+from triper.models import INTERESTS, LinkImport, Member, MustVisit, TripInput, blank_preferences
+from triper.pipeline import default_alphas
 
 
 def _prefs(**values: float) -> dict[str, float]:

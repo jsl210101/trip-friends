@@ -1,5 +1,5 @@
-from wayfare.explain import apply_model_wording, explain_pair, smallest_weight_reversal
-from wayfare.scoring import factor_label, score_features, top_factor
+from triper.explain import apply_model_wording, explain_pair, smallest_weight_reversal
+from triper.scoring import factor_label, score_features, top_factor
 
 
 def test_explanation_cites_the_actual_top_factor_and_a_real_reversal():

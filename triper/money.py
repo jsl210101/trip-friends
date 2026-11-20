@@ -111,7 +111,7 @@ def _fetch_live(base: str, quote: str, timeout: float = 2.5) -> RateQuote | None
             payload = json.loads(response.read().decode("utf-8"))
         rate = float(payload["rates"][quote])
         as_of = str(payload.get("date") or "")
-    except (urllib.error.URLError, TimeoutError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+    except Exception:  # noqa: BLE001 - offline, Pyodide (no sockets), or bad payload all fall back
         return None
     if rate <= 0:
         return None

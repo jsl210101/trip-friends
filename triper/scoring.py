@@ -11,7 +11,7 @@ attribute tags over interests that the member rates above zero.
 
 from __future__ import annotations
 
-from wayfare.models import FEATURES, FEATURE_LABELS, INTERESTS, Member, Venue
+from triper.models import FEATURES, FEATURE_LABELS, INTERESTS, Member, Venue
 
 # Reference points for unit-interval features. Documented approximations.
 TRAVEL_REF_MIN = 90.0

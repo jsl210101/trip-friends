@@ -7,7 +7,7 @@ test checks that the two catalogues stay in step.
 
 from __future__ import annotations
 
-from wayfare.models import Member
+from triper.models import Member
 
 DEFAULT_LANG = "zh"
 LANGS = ("zh", "en")
@@ -95,7 +95,7 @@ EN: dict[str, str] = {
     "places.add_matches": "Add selected matches as flexible must-visits",
     "privacy.title": "2. De-identify",
     "privacy.notice": (
-        "Before any external model call, Wayfare de-identifies the trip. Names, email "
+        "Before any external model call, Triper de-identifies the trip. Names, email "
         "addresses, booking references, and the precise abode address stay in this "
         "session. The model, if you consent and a key is configured, receives only an "
         "allowlisted payload: trip dates, budget, interests, pace, agreed weightage, a "
@@ -403,7 +403,7 @@ ZH: dict[str, str] = {
     "places.add_matches": "把选中的匹配加为灵活必去",
     "privacy.title": "2. 去标识",
     "privacy.notice": (
-        "在任何外部模型调用之前，Wayfare 会先去除行程里的身份信息。姓名、邮箱、"
+        "在任何外部模型调用之前，Triper 会先去除行程里的身份信息。姓名、邮箱、"
         "预订号和住宿详细地址都留在本次会话中。若你同意并且配置了密钥，模型只能收到"
         "允许列表中的内容：行程日期、预算、兴趣、节奏、约定权重、出发区域名称，以及"
         "导入链接的路径和说明文字。饮食和无障碍只在本地作为小组硬性约束，不会当成"

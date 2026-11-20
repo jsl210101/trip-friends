@@ -112,7 +112,7 @@ class LLMClient:
                 raw = json.loads(response.read().decode("utf-8"))
             content = raw["choices"][0]["message"]["content"]
             parsed = json.loads(content)
-        except (urllib.error.URLError, TimeoutError, KeyError, IndexError, json.JSONDecodeError, TypeError, ValueError):
+        except Exception:  # noqa: BLE001 - offline, Pyodide (no sockets), or bad payload all fall back
             return None
         if not isinstance(parsed, dict):
             return None

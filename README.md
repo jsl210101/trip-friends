@@ -1,8 +1,23 @@
-# Wayfare
+# Triper
 
-Wayfare plans a short group trip. Deterministic rules enforce hard constraints, a weighted linear score ranks venues, weighted Nash social welfare sets a fairness floor, and an orienteering heuristic builds the route. A pretrained language model is optional and is limited to unstructured text: imported-link parsing, and wording of explanations whose factors were already computed. It does not rank venues or choose the itinerary.
+Triper plans a short group trip. Deterministic rules enforce hard constraints, a weighted linear score ranks venues, weighted Nash social welfare sets a fairness floor, and an orienteering heuristic builds the route. A pretrained language model is optional and is limited to unstructured text: imported-link parsing, and wording of explanations whose factors were already computed. It does not rank venues or choose the itinerary.
 
 The design follows the report section “Use of AI Technologies”, not only the shorter class demo. Where the live demo drafts the day with a model and checks fairness afterwards, this app filters, scores, and routes locally first.
+
+## Try it in the browser / 在浏览器里直接用
+
+**https://jsl210101.github.io/trip-friends/**
+
+The `docs/` folder is a static build made with [stlite](https://github.com/whitphx/stlite) (`@stlite/browser` 1.12.2): Streamlit and the `triper` package run in your browser on Pyodide, so GitHub Pages can host it with no server and no API key. The first visit downloads Python and Streamlit and takes about 10–60 seconds. In this build the model features stay off (no key), so explanations and link matching use the local fallback, and the exchange suggestion uses the stored 2026-11-06 snapshot whenever the live rate cannot be fetched from the browser.
+
+`docs/` 是用 stlite 生成的静态版本，Python 在访问者的浏览器里运行，不需要服务器，也不需要 API key。第一次打开要等 10–60 秒。
+
+Rebuild after changing `app.py`, `triper/`, or `.streamlit/config.toml`:
+
+```bash
+python scripts/build_stlite.py   # rewrites docs/index.html and docs/.nojekyll
+python -m http.server -d docs 8000   # preview at http://localhost:8000/
+```
 
 ## Run
 
@@ -30,7 +45,7 @@ export LLM_MODEL=gpt-4o-mini                     # optional
 
 Temperature is capped at 0.2. Do not put keys in the repo.
 
-`python -m wayfare.demo` prints the sample plan in the terminal.
+`python -m triper.demo` prints the sample plan in the terminal.
 
 ## What runs locally
 

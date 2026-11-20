@@ -1,5 +1,5 @@
-from wayfare.explain import explain_pair, render_explanation
-from wayfare.i18n import catalogue_keys, t
+from triper.explain import explain_pair, render_explanation
+from triper.i18n import catalogue_keys, t
 
 
 def test_chinese_and_english_catalogues_match():

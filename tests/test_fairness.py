@@ -1,4 +1,4 @@
-from wayfare.fairness import plan_is_better, weighted_nsw_product, PlanUtility, select_floor
+from triper.fairness import plan_is_better, weighted_nsw_product, PlanUtility, select_floor
 
 
 def test_nsw_prefers_a_balanced_plan_over_a_majority_plan():

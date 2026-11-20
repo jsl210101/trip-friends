@@ -15,16 +15,16 @@ import re
 from dataclasses import dataclass, field
 from urllib.parse import unquote
 
-from wayfare.deidentify import build_llm_payload, sanitise_link
-from wayfare.i18n import t
-from wayfare.llm import (
+from triper.deidentify import build_llm_payload, sanitise_link
+from triper.i18n import t
+from triper.llm import (
     EXTRACT_INSTRUCTIONS,
     LLMClient,
     ModelCall,
     output_rejection,
     parse_place_response,
 )
-from wayfare.models import LinkImport, TripInput, Venue
+from triper.models import LinkImport, TripInput, Venue
 
 CONFIRMED_THRESHOLD = 0.82
 POSSIBLE_THRESHOLD = 0.55

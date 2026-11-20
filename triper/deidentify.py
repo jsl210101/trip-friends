@@ -16,8 +16,8 @@ import json
 import re
 from urllib.parse import unquote, urlparse
 
-from wayfare.models import INTERESTS, LinkImport, Member, TripInput
-from wayfare.money import planning_budget_sgd
+from triper.models import INTERESTS, LinkImport, Member, TripInput
+from triper.money import planning_budget_sgd
 
 ALLOWLIST: frozenset[str] = frozenset(
     {

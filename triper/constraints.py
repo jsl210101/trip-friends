@@ -13,8 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
-from wayfare.models import Member, TripInput, Venue, weekday_key
-from wayfare.money import planning_budget_sgd
+from triper.models import Member, TripInput, Venue, weekday_key
+from triper.money import planning_budget_sgd
 
 
 @dataclass

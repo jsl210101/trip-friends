@@ -11,7 +11,7 @@ interests alone. signal 0 makes no change.
 
 from __future__ import annotations
 
-from wayfare.models import INTERESTS, Member, Venue
+from triper.models import INTERESTS, Member, Venue
 
 # Prior observations so the first click does not replace the stated profile.
 PRIOR_STRENGTH = 3

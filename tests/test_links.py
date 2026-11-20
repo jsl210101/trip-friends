@@ -1,7 +1,7 @@
-from wayfare.links import accept_extracted_names, match_places, resolve_links
-from wayfare.llm import output_rejection, parse_place_response
-from wayfare.sample import sample_trip
-from wayfare.venues import load_venues
+from triper.links import accept_extracted_names, match_places, resolve_links
+from triper.llm import output_rejection, parse_place_response
+from triper.sample import sample_trip
+from triper.venues import load_venues
 
 
 def test_invented_places_are_dropped_and_catalogue_places_match():
@@ -27,7 +27,7 @@ def test_invented_places_are_dropped_and_catalogue_places_match():
 
 def test_low_confidence_partial_name_needs_confirmation():
     venues = load_venues()
-    from wayfare.links import match_places
+    from triper.links import match_places
 
     matches = match_places("we might do gardens", venues)
     assert matches
@@ -44,8 +44,8 @@ def test_xiaohongshu_and_douyin_share_cards_match_without_a_network_fetch(monkey
         "27 滨海湾花园夜景也太好看了 http://xhslink.com/a/GbBay01?xsec_token=secret-token "
         "复制这段话，打开【小红书】查看"
     )
-    from wayfare.deidentify import share_links, split_share_card
-    from wayfare.links import is_supported_import_host
+    from triper.deidentify import share_links, split_share_card
+    from triper.links import is_supported_import_host
 
     pairs = share_links(xhs)
     assert pairs and "xhslink.com" in pairs[0][0]

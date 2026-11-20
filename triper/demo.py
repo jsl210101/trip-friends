@@ -1,19 +1,19 @@
-"""Print a sample plan. Useful without Streamlit: python -m wayfare.demo."""
+"""Print a sample plan. Useful without Streamlit: python -m triper.demo."""
 
 from __future__ import annotations
 
-from wayfare.models import format_hm
-from wayfare.money import exchange_suggestion, format_money, format_rate
-from wayfare.pipeline import plan_trip
-from wayfare.sample import sample_trip
-from wayfare.venues import load_venues
+from triper.models import format_hm
+from triper.money import exchange_suggestion, format_money, format_rate
+from triper.pipeline import plan_trip
+from triper.sample import sample_trip
+from triper.venues import load_venues
 
 
 def main() -> None:
     trip = sample_trip()
     result = plan_trip(trip)
     names = {venue.id: venue.name for venue in load_venues()}
-    print("Wayfare sample plan")
+    print("Triper sample plan")
     if trip.links:
         print(f"Sample import: {trip.links[0].url} (Xiaohongshu short link, not opened)")
     print(f"Floor met: {result.meets_floor}")

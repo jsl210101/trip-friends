@@ -2,16 +2,16 @@ import json
 
 import pytest
 
-from wayfare.constraints import filter_venues
-from wayfare.models import INTERESTS, Member, TripInput, Venue, WEEKDAYS, blank_preferences
-from wayfare.money import (
+from triper.constraints import filter_venues
+from triper.models import INTERESTS, Member, TripInput, Venue, WEEKDAYS, blank_preferences
+from triper.money import (
     CURRENCIES,
     exchange_suggestion,
     fallback_quote,
     planning_budget_sgd,
     sgd_per_unit_fallback,
 )
-from wayfare.pipeline import plan_trip
+from triper.pipeline import plan_trip
 
 
 def _member() -> Member:
@@ -123,7 +123,7 @@ def test_live_rate_falls_back_offline_when_the_network_fails(monkeypatch):
     def refuse(*_args, **_kwargs):
         raise TimeoutError("offline")
 
-    monkeypatch.setattr("wayfare.money.urllib.request.urlopen", refuse)
+    monkeypatch.setattr("triper.money.urllib.request.urlopen", refuse)
     hint = exchange_suggestion(80, "EUR", allow_network=True)
     assert hint.source == "fallback"
     assert hint.planning_sgd == pytest.approx(80 * sgd_per_unit_fallback("EUR"))
@@ -149,7 +149,7 @@ def test_live_rate_parses_a_public_quote_without_sending_the_amount(monkeypatch)
         seen["timeout"] = timeout
         return _Response()
 
-    monkeypatch.setattr("wayfare.money.urllib.request.urlopen", fake_open)
+    monkeypatch.setattr("triper.money.urllib.request.urlopen", fake_open)
     hint = exchange_suggestion(10, "USD", allow_network=True)
     assert hint.source == "live"
     assert hint.as_of == "2026-11-06"

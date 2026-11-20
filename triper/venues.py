@@ -7,10 +7,10 @@ hours or prices stay missing. Crowd levels are estimates.
 
 from __future__ import annotations
 
-from wayfare.models import INTERESTS, WEEKDAYS, Venue, parse_hm
+from triper.models import INTERESTS, WEEKDAYS, Venue, parse_hm
 
 SOURCE = (
-    "Illustrative offline catalogue for the Wayfare demo "
+    "Illustrative offline catalogue for the Triper demo "
     "(not a live OneMap, LTA DataMall, or data.gov.sg feed)"
 )
 

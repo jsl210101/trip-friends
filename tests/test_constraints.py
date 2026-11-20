@@ -1,6 +1,6 @@
-from wayfare.constraints import filter_venues
-from wayfare.models import INTERESTS, Member, MustVisit, TripInput, Venue, WEEKDAYS, blank_preferences
-from wayfare.pipeline import plan_trip
+from triper.constraints import filter_venues
+from triper.models import INTERESTS, Member, MustVisit, TripInput, Venue, WEEKDAYS, blank_preferences
+from triper.pipeline import plan_trip
 
 
 def _member(**kwargs) -> Member:

@@ -1,4 +1,4 @@
-"""Shared records for a Wayfare trip.
+"""Shared records for a Triper trip.
 
 Personal fields (name, email, booking reference, precise abode address,
 diet, accessibility) stay inside the session. Only an allowlisted,

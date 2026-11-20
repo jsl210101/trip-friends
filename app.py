@@ -1,4 +1,4 @@
-"""Wayfare session UI.
+"""Triper session UI.
 
 The page is a thin shell over the local pipeline. Trip inputs live in
 st.session_state and are discarded by "Clear all my data". Nothing is written
@@ -13,13 +13,13 @@ from datetime import date, datetime
 
 import streamlit as st
 
-from wayfare.deidentify import PayloadRejected, build_llm_payload, share_links
-from wayfare.explain import render_explanation
-from wayfare.i18n import DEFAULT_LANG, floor_text, t, venue_caption
-from wayfare.links import resolve_links
-from wayfare.llm import LLMClient
-from wayfare.money import CURRENCIES, exchange_suggestion, format_money, format_rate
-from wayfare.models import (
+from triper.deidentify import PayloadRejected, build_llm_payload, share_links
+from triper.explain import render_explanation
+from triper.i18n import DEFAULT_LANG, floor_text, t, venue_caption
+from triper.links import resolve_links
+from triper.llm import LLMClient
+from triper.money import CURRENCIES, exchange_suggestion, format_money, format_rate
+from triper.models import (
     FEATURES,
     INTERESTS,
     LinkImport,
@@ -29,19 +29,19 @@ from wayfare.models import (
     blank_preferences,
     format_hm,
 )
-from wayfare.pipeline import (
+from triper.pipeline import (
     apply_member_feedback,
     default_alphas,
     illustrative_forecast,
     plan_trip,
     rephrase_explanations,
 )
-from wayfare.preferences import rating_to_signal
-from wayfare.sample import sample_trip
-from wayfare.scoring import preference_match
-from wayfare.venues import ABODES, load_venues
+from triper.preferences import rating_to_signal
+from triper.sample import sample_trip
+from triper.scoring import preference_match
+from triper.venues import ABODES, load_venues
 
-st.set_page_config(page_title="Wayfare", page_icon="WF", layout="wide")
+st.set_page_config(page_title="Triper", page_icon="TR", layout="wide")
 st.markdown(
     """
     <style>
@@ -54,14 +54,14 @@ st.markdown(
         letter-spacing: -0.02em;
     }
     div[data-testid="stSidebar"] { background: #e7efe9; }
-    .wayfare-banner {
+    .triper-banner {
         background: #123c3a;
         color: #f6f3ec;
         padding: 0.9rem 1.1rem;
         border-radius: 12px;
         margin-bottom: 0.8rem;
     }
-    .wayfare-banner p { margin: 0.2rem 0 0; color: #d5e4df; }
+    .triper-banner p { margin: 0.2rem 0 0; color: #d5e4df; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -377,8 +377,8 @@ def _conflict_lines(plan, trip: TripInput) -> list[str]:
 def _render_banner() -> None:
     st.markdown(
         f"""
-        <div class="wayfare-banner">
-          <strong>Wayfare</strong>
+        <div class="triper-banner">
+          <strong>Triper</strong>
           <p>{tr("banner.body")}</p>
         </div>
         """,
